@@ -14,9 +14,7 @@ use esp_hal::{
         master::{Config, Spi, SpiDmaBus}, Mode
     }, time::Rate, timer::{systimer::SystemTimer, timg::TimerGroup}, Async
 };
-use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-use static_cell::StaticCell;
-use embassy_sync::mutex::Mutex;
+use embedded_hal_bus::spi::ExclusiveDevice;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use mipidsi::{interface::SpiInterface, TestImage};
 use mipidsi::{models::ST7789, options::ColorInversion, Builder};
@@ -115,24 +113,19 @@ async fn main(spawner: Spawner) {
     .with_sck(sclk)
     .with_mosi(mosi)
     .with_dma(p.DMA_CH0)
-    .with_buffers(dma_rx_buf, dma_tx_buf)
-    .into_async();
+    .with_buffers(dma_rx_buf, dma_tx_buf);
 
     let disp_buffer = unsafe {PSRAM_ALLOCATOR.allocate(Layout::from_size_align(1024, 1).unwrap()).unwrap().as_mut()};
     let res = Output::new(res, Level::Low, Default::default());
     let dc = Output::new(dc, Level::Low, Default::default());
     let cs = Output::new(cs, Level::High, Default::default());
-    static SPI_BUS: StaticCell<Mutex<NoopRawMutex, SpiDmaBus<'static, Async>>> = StaticCell::new();
-    let spi_bus = Mutex::new(spi);
-    let spi_bus = SPI_BUS.init(spi_bus);
-    let spi_device = SpiDevice::new(spi_bus, cs);
+    let spi_device = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
     let di = SpiInterface::new(spi_device, dc, disp_buffer);
     let mut delay = embassy_time::Delay;
     let mut display = Builder::new(ST7789, di).display_size(W as u16, H as u16)
     .invert_colors(ColorInversion::Inverted)
     .reset_pin(res)
     .init(&mut delay)
-    .await
     .unwrap();
 
     
@@ -145,8 +138,6 @@ async fn main(spawner: Spawner) {
     // let mut text_x = W;
     // let mut text_y = H / 2;
 
-    // // Alternating color
-    // let colors = [Rgb565::RED, Rgb565::GREEN, Rgb565::BLUE];
 
     // // Create styles used by the drawing operations.
     // let thin_stroke = PrimitiveStyle::with_stroke(Rgb565::CSS_LIME, 1);
@@ -156,6 +147,7 @@ async fn main(spawner: Spawner) {
     //     .stroke_width(3)
     //     .stroke_alignment(StrokeAlignment::Inside)
     //     .build();
+
     // let fill = PrimitiveStyle::with_fill(Rgb565::CSS_CYAN);
     // let character_style = MonoTextStyle::new(&FONT_10X20, Rgb565::CSS_PINK);
 
@@ -167,7 +159,7 @@ async fn main(spawner: Spawner) {
     //     .into_styled(border_stroke)
     //     .draw(&mut display).unwrap();
 
-    // TestImage::new().draw(&mut display).unwrap();
+    TestImage::new().draw(&mut display).unwrap();
 
     
 

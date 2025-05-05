@@ -359,6 +359,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-hal-bus"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "513e0b3a8fb7d3013a8ae17a834283f170deaf7d0eeab0a7c1a36ad4dd356d22"
+dependencies = [
+ "critical-section",
+ "embedded-hal 1.0.0",
+]
+
+[[package]]
 name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -864,12 +874,13 @@ dependencies = [
 [[package]]
 name = "mipidsi"
 version = "0.9.0"
-source = "git+https://github.com/bagbag/mipidsi?rev=09a2f02fcf03444066c48506e7816592a7dabf69#09a2f02fcf03444066c48506e7816592a7dabf69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ba34dcbf61182ffa6992b5a4d9b566d5a99df127fd93f6d314213347329e92f"
 dependencies = [
  "embedded-graphics-core",
  "embedded-hal 1.0.0",
- "embedded-hal-async",
  "heapless",
+ "nb 1.1.0",
 ]
 
 [[package]]
@@ -1093,12 +1104,12 @@ version = "0.1.0"
 dependencies = [
  "allocator-api2",
  "critical-section",
- "embassy-embedded-hal",
  "embassy-executor",
  "embassy-net",
  "embassy-sync",
  "embassy-time",
  "embedded-graphics",
+ "embedded-hal-bus",
  "embedded-io",
  "embedded-io-async",
  "esp-alloc",
