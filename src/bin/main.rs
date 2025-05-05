@@ -2,18 +2,16 @@
 #![no_main]
 #![feature(allocator_api)]
 
-use allocator_api2::vec::Vec;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_alloc::HEAP;
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
-use esp_hal::psram::{
-    self, FlashFreq, PsramConfig, PsramSize, SpiRamFreq, SpiTimingConfigCoreClock,
-};
+use esp_hal::psram::{self, FlashFreq, PsramConfig, PsramSize, SpiRamFreq, SpiTimingConfigCoreClock};
 use esp_hal::timer::systimer::SystemTimer;
 use esp_hal::timer::timg::TimerGroup;
 use log::info;
+use allocator_api2::vec::Vec;
 
 extern crate alloc;
 
@@ -48,7 +46,12 @@ async fn main(spawner: Spawner) {
     info!("Embassy initialized!");
 
     let timer1 = TimerGroup::new(p.TIMG0);
-    let _init = esp_wifi::init(timer1.timer0, esp_hal::rng::Rng::new(p.RNG), p.RADIO_CLK).unwrap();
+    let _init = esp_wifi::init(
+        timer1.timer0,
+        esp_hal::rng::Rng::new(p.RNG),
+        p.RADIO_CLK,
+    )
+    .unwrap();
 
     // TODO: Spawn some tasks
     let _ = spawner;
