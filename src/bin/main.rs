@@ -18,10 +18,19 @@ use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use static_cell::StaticCell;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use mipidsi::interface::SpiInterface;
+use mipidsi::{interface::SpiInterface, TestImage};
 use mipidsi::{models::ST7789, options::ColorInversion, Builder};
 extern crate alloc;
 use log::{error, info};
+use embedded_graphics::{
+    mono_font::{ascii::FONT_10X20, MonoTextStyle},
+    pixelcolor::Rgb565,
+    prelude::*,
+    primitives::{
+        Circle, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StrokeAlignment, Triangle,
+    },
+    text::{Alignment, Text},
+};
 
 static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
@@ -119,12 +128,46 @@ async fn main(spawner: Spawner) {
     let spi_device = SpiDevice::new(spi_bus, cs);
     let di = SpiInterface::new(spi_device, dc, disp_buffer);
     let mut delay = embassy_time::Delay;
-    let display = Builder::new(ST7789, di).display_size(W as u16, H as u16)
+    let mut display = Builder::new(ST7789, di).display_size(W as u16, H as u16)
     .invert_colors(ColorInversion::Inverted)
     .reset_pin(res)
     .init(&mut delay)
     .await
     .unwrap();
+
+    
+
+    // // Text
+    // let char_w = 10;
+    // let char_h = 20;
+    // let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    // let text = "Hello World ^_^;";
+    // let mut text_x = W;
+    // let mut text_y = H / 2;
+
+    // // Alternating color
+    // let colors = [Rgb565::RED, Rgb565::GREEN, Rgb565::BLUE];
+
+    // // Create styles used by the drawing operations.
+    // let thin_stroke = PrimitiveStyle::with_stroke(Rgb565::CSS_LIME, 1);
+    // let thick_stroke = PrimitiveStyle::with_stroke(Rgb565::CSS_RED, 3);
+    // let border_stroke = PrimitiveStyleBuilder::new()
+    //     .stroke_color(Rgb565::WHITE)
+    //     .stroke_width(3)
+    //     .stroke_alignment(StrokeAlignment::Inside)
+    //     .build();
+    // let fill = PrimitiveStyle::with_fill(Rgb565::CSS_CYAN);
+    // let character_style = MonoTextStyle::new(&FONT_10X20, Rgb565::CSS_PINK);
+
+    // let yoffset = 14;
+
+    // // Draw a 3px wide outline around the display.
+    // display
+    //     .bounding_box()
+    //     .into_styled(border_stroke)
+    //     .draw(&mut display).unwrap();
+
+    // TestImage::new().draw(&mut display).unwrap();
 
     
 

@@ -56,6 +56,7 @@ allocator-api2 = { version = "0.2.0", default-features = false, features = ["all
 mipidsi = { git = "https://github.com/bagbag/mipidsi", rev = "09a2f02fcf03444066c48506e7816592a7dabf69" }
 embassy-embedded-hal = "0.3.0"
 embassy-sync = "0.6.2"
+embedded-graphics = "0.8.1"
 
 [profile.dev]
 # Rust debug is too slow.
