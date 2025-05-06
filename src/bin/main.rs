@@ -4,22 +4,34 @@
 
 use core::alloc::Layout;
 
-use allocator_api2::{alloc::Allocator, vec::Vec};
+// use allocator_api2::{alloc::Allocator, vec::Vec};
 use embassy_executor::Spawner;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
+use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_alloc::HEAP;
 use esp_backtrace as _;
 use esp_hal::{
-    clock::CpuClock, dma::{DmaRxBuf, DmaTxBuf, ExternalBurstConfig}, gpio::{Level, Output}, peripherals::DMA, psram::{self, FlashFreq, PsramConfig, PsramSize, SpiRamFreq, SpiTimingConfigCoreClock}, spi::{
-        master::{Config, Spi, SpiDmaBus}, Mode
-    }, time::Rate, timer::{systimer::SystemTimer, timg::TimerGroup}, Async
+    clock::CpuClock,
+    dma::{DmaRxBuf, DmaTxBuf, ExternalBurstConfig},
+    gpio::{Level, Output},
+    peripherals::DMA,
+    psram::{self, FlashFreq, PsramConfig, PsramSize, SpiRamFreq, SpiTimingConfigCoreClock},
+    spi::{
+        master::{Config, Spi, SpiDmaBus},
+        Mode,
+    },
+    time::Rate,
+    timer::{systimer::SystemTimer, timg::TimerGroup},
+    Async,
 };
-use embedded_hal_bus::spi::ExclusiveDevice;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use mipidsi::{interface::SpiInterface, TestImage};
+use mipidsi::{
+    interface::SpiInterface,
+    options::{HorizontalRefreshOrder, RefreshOrder, VerticalRefreshOrder},
+    TestImage,
+};
 use mipidsi::{models::ST7789, options::ColorInversion, Builder};
-extern crate alloc;
-use log::{error, info};
+// extern crate alloc;
 use embedded_graphics::{
     mono_font::{ascii::FONT_10X20, MonoTextStyle},
     pixelcolor::Rgb565,
@@ -29,16 +41,24 @@ use embedded_graphics::{
     },
     text::{Alignment, Text},
 };
+use log::{error, info};
 
-static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
+// static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
-const DMA_BUFFER_SIZE: usize = 32000;
-const DMA_ALIGNMENT: ExternalBurstConfig = ExternalBurstConfig::Size64;
-const DMA_CHUNK_SIZE: usize = 4096 - DMA_ALIGNMENT as usize;
+// const DMA_BUFFER_SIZE: usize = 32000;
+// const DMA_ALIGNMENT: ExternalBurstConfig = ExternalBurstConfig::Size64;
+// const DMA_CHUNK_SIZE: usize = 4096 - DMA_ALIGNMENT as usize;
 
 // Display
-const W: i32 = 320;
-const H: i32 = 170;
+// Size
+const W: u16 = 205;
+const H: u16 = 320;
+// Offset
+const X_OFFSET: u16 = 35;
+const Y_OFFSET: u16 = 0;
+// Active area
+const W_ACTIVE: u16 = W - X_OFFSET;
+const H_ACTIVE: u16 = H - Y_OFFSET;
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -53,15 +73,15 @@ async fn main(spawner: Spawner) {
         });
 
     let p = esp_hal::init(config);
-    esp_alloc::heap_allocator!(size: 72 * 1024);
-    let (start, size) = psram::psram_raw_parts(&p.PSRAM);
-    unsafe {
-        PSRAM_ALLOCATOR.add_region(esp_alloc::HeapRegion::new(
-            start,
-            size,
-            esp_alloc::MemoryCapability::External.into(),
-        ));
-    }
+    // esp_alloc::heap_allocator!(size: 72 * 1024);
+    // let (start, size) = psram::psram_raw_parts(&p.PSRAM);
+    // unsafe {
+    //     PSRAM_ALLOCATOR.add_region(esp_alloc::HeapRegion::new(
+    //         start,
+    //         size,
+    //         esp_alloc::MemoryCapability::External.into(),
+    //     ));
+    // }
 
     let timer0 = SystemTimer::new(p.SYSTIMER);
     esp_hal_embassy::init(timer0.alarm0);
@@ -69,66 +89,71 @@ async fn main(spawner: Spawner) {
     info!("Embassy initialized!");
 
     let timer1 = TimerGroup::new(p.TIMG0);
-    let _init = esp_wifi::init(timer1.timer0, esp_hal::rng::Rng::new(p.RNG), p.RADIO_CLK).unwrap();
+    // let _init: esp_wifi::EspWifiController<'_> = esp_wifi::init(timer1.timer0, esp_hal::rng::Rng::new(p.RNG), p.RADIO_CLK).unwrap();
 
     // DMA for SPI
-    let (_, tx_descriptors) =
-        esp_hal::dma_descriptors_chunk_size!(0, DMA_BUFFER_SIZE, DMA_CHUNK_SIZE);
-    let layout =
-        core::alloc::Layout::from_size_align(DMA_BUFFER_SIZE, DMA_ALIGNMENT as usize).unwrap();
-    let tx_buffer: &mut [u8] = unsafe { PSRAM_ALLOCATOR.allocate(layout).unwrap().as_mut() };
-    info!(
-        "TX: {:p} len {} ({} descripters)",
-        tx_buffer.as_ptr(),
-        tx_buffer.len(),
-        tx_descriptors.len()
-    );
-    let dma_tx_buf =
-        DmaTxBuf::new_with_config(tx_descriptors, tx_buffer, DMA_ALIGNMENT).unwrap();
-    let (rx_buffer, rx_descriptors, _, _) = esp_hal::dma_buffers!(4, 0);
-    info!(
-        "RX: {:p} len {} ({} descripters)",
-        rx_buffer.as_ptr(),
-        rx_buffer.len(),
-        rx_descriptors.len()
-    );
-    let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
+    // let (_, tx_descriptors) =
+    //     esp_hal::dma_descriptors_chunk_size!(0, DMA_BUFFER_SIZE, DMA_CHUNK_SIZE);
+    // let layout =
+    //     core::alloc::Layout::from_size_align(DMA_BUFFER_SIZE, DMA_ALIGNMENT as usize).unwrap();
+    // let tx_buffer: &mut [u8] = unsafe { PSRAM_ALLOCATOR.allocate(layout).unwrap().as_mut() };
+    // info!(
+    //     "TX: {:p} len {} ({} descripters)",
+    //     tx_buffer.as_ptr(),
+    //     tx_buffer.len(),
+    //     tx_descriptors.len()
+    // );
+    // let dma_tx_buf =
+    //     DmaTxBuf::new_with_config(tx_descriptors, tx_buffer, DMA_ALIGNMENT).unwrap();
+    // let (rx_buffer, rx_descriptors, _, _) = esp_hal::dma_buffers!(4, 0);
+    // info!(
+    //     "RX: {:p} len {} ({} descripters)",
+    //     rx_buffer.as_ptr(),
+    //     rx_buffer.len(),
+    //     rx_descriptors.len()
+    // );
+    // let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
 
     // Creating SPI
-    let sclk = p.GPIO7;
-    let mosi = p.GPIO6;
-    let res = p.GPIO5;
-    let dc = p.GPIO4;
-    let cs = p.GPIO2;
+    let sclk = p.GPIO4;
+    let mosi = p.GPIO5;
+    let res = p.GPIO6;
+    let dc = p.GPIO7;
+    let cs = p.GPIO15;
 
     // Need to set miso first so that mosi can overwrite the
     // output connection (because we are using the same pin to loop back)
     let spi = Spi::new(
         p.SPI2,
         Config::default()
-            .with_frequency(Rate::from_khz(100))
+            .with_frequency(Rate::from_mhz(40))
             .with_mode(Mode::_0),
     )
     .unwrap()
     .with_sck(sclk)
-    .with_mosi(mosi)
-    .with_dma(p.DMA_CH0)
-    .with_buffers(dma_rx_buf, dma_tx_buf);
+    .with_mosi(mosi);
+    // .with_dma(p.DMA_CH0)
+    // .with_buffers(dma_rx_buf, dma_tx_buf);
 
-    let disp_buffer = unsafe {PSRAM_ALLOCATOR.allocate(Layout::from_size_align(1024, 1).unwrap()).unwrap().as_mut()};
+    let mut disp_buffer: [u8; W_ACTIVE as usize * H_ACTIVE as usize] =
+        [0; W_ACTIVE as usize * H_ACTIVE as usize];
     let res = Output::new(res, Level::Low, Default::default());
     let dc = Output::new(dc, Level::Low, Default::default());
     let cs = Output::new(cs, Level::High, Default::default());
     let spi_device = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
-    let di = SpiInterface::new(spi_device, dc, disp_buffer);
+    let di = SpiInterface::new(spi_device, dc, &mut disp_buffer);
     let mut delay = embassy_time::Delay;
-    let mut display = Builder::new(ST7789, di).display_size(W as u16, H as u16)
-    .invert_colors(ColorInversion::Inverted)
-    .reset_pin(res)
-    .init(&mut delay)
-    .unwrap();
-
-    
+    let mut display = Builder::new(ST7789, di)
+        .display_size(W_ACTIVE, H_ACTIVE)
+        .display_offset(X_OFFSET, Y_OFFSET)
+        .refresh_order(RefreshOrder {
+            vertical: VerticalRefreshOrder::BottomToTop,
+            horizontal: HorizontalRefreshOrder::RightToLeft,
+        })
+        .invert_colors(ColorInversion::Inverted)
+        .reset_pin(res)
+        .init(&mut delay)
+        .unwrap();
 
     // // Text
     // let char_w = 10;
@@ -137,7 +162,6 @@ async fn main(spawner: Spawner) {
     // let text = "Hello World ^_^;";
     // let mut text_x = W;
     // let mut text_y = H / 2;
-
 
     // // Create styles used by the drawing operations.
     // let thin_stroke = PrimitiveStyle::with_stroke(Rgb565::CSS_LIME, 1);
@@ -159,15 +183,26 @@ async fn main(spawner: Spawner) {
     //     .into_styled(border_stroke)
     //     .draw(&mut display).unwrap();
 
+    display
+        .fill_solid(
+            &Rectangle {
+                top_left: Point { x: 0, y: 0 },
+                size: Size {
+                    width: W_ACTIVE as u32,
+                    height: H_ACTIVE as u32,
+                },
+            },
+            Rgb565::BLACK,
+        )
+        .unwrap();
+    Timer::after(Duration::from_secs(1)).await;
     TestImage::new().draw(&mut display).unwrap();
-
-    
 
     // TODO: Spawn some tasks
     let _ = spawner;
 
-    info!("Global heap stats: {}", HEAP.stats());
-    info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
+    // info!("Global heap stats: {}", HEAP.stats());
+    // info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
 
     loop {
         info!("Hello world!");
