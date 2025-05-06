@@ -60,8 +60,13 @@ const H_ACTIVE: u16 = H - Y_OFFSET;
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
-    let p = esp_hal::init(esp_hal::Config::default());
-    esp_alloc::heap_allocator!(size: 100 * 1024);
+    let mut psram_conf = PsramConfig::default();
+    psram_conf.size = PsramSize::Size(8 * 1024 * 1024);
+    let conf = esp_hal::Config::default()
+        .with_cpu_clock(CpuClock::_240MHz)
+        .with_psram(psram_conf);
+    let p = esp_hal::init(conf);
+    //esp_alloc::heap_allocator!(size: 100 * 1024);
     let (start, size) = psram::psram_raw_parts(&p.PSRAM);
     info!("PSRAM start: {}, size: {}", start as usize, size as usize);
     unsafe {
@@ -130,7 +135,7 @@ async fn main(_spawner: Spawner) {
     Timer::after(Duration::from_secs(1)).await;
     TestImage::new().draw(&mut display).unwrap();
 
-    info!("Global heap stats: {}", HEAP.stats());
+    //info!("Global heap stats: {}", HEAP.stats());
     info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
 
     loop {

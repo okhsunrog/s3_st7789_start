@@ -4,7 +4,9 @@ runner = "espflash flash --monitor --chip esp32s3"
 [env]
 ESP_LOG="info"
 ESP_HAL_CONFIG_PSRAM_MODE="octal"
-
+ESP_HAL_PLACE_SPI_DRIVER_IN_RAM="true"
+ESP_HAL_CONFIG_PLACE_SWITCH_TABLES_IN_RAM="true"
+ESP_HAL_CONFIG_PLACE_ANON_IN_RAM="true"
 [build]
 rustflags = [
   "-C", "link-arg=-nostartfiles",
