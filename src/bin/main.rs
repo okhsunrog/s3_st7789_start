@@ -46,10 +46,6 @@ use log::{error, info};
 
 static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
-const DMA_BUFFER_SIZE: usize = 32000;
-const DMA_ALIGNMENT: ExternalBurstConfig = ExternalBurstConfig::Size64;
-const DMA_CHUNK_SIZE: usize = 4096 - DMA_ALIGNMENT as usize;
-
 // Display
 // Size
 const W: u16 = 205;
@@ -70,7 +66,7 @@ async fn main(_spawner: Spawner) {
         .with_cpu_clock(CpuClock::_240MHz)
         .with_psram(psram_conf);
     let p = esp_hal::init(conf);
-    //esp_alloc::heap_allocator!(size: 100 * 1024);
+    esp_alloc::heap_allocator!(size: 100 * 1024);
     let (start, size) = psram::psram_raw_parts(&p.PSRAM);
     info!("PSRAM start: {}, size: {}", start as usize, size as usize);
     unsafe {
@@ -84,29 +80,9 @@ async fn main(_spawner: Spawner) {
     let timer0 = SystemTimer::new(p.SYSTIMER);
     esp_hal_embassy::init(timer0.alarm0);
 
-    info!("Embassy initialized!");
-
-    // DMA for SPI
-    let (_, tx_descriptors) =
-        esp_hal::dma_descriptors_chunk_size!(0, DMA_BUFFER_SIZE, DMA_CHUNK_SIZE);
-    let layout =
-        core::alloc::Layout::from_size_align(DMA_BUFFER_SIZE, DMA_ALIGNMENT as usize).unwrap();
-    let tx_buffer: &mut [u8] = unsafe { PSRAM_ALLOCATOR.allocate(layout).unwrap().as_mut() };
-    // info!(
-    //     "TX: {:p} len {} ({} descripters)",
-    //     tx_buffer.as_ptr(),
-    //     tx_buffer.len(),
-    //     tx_descriptors.len()
-    // );
-    let dma_tx_buf = DmaTxBuf::new_with_config(tx_descriptors, tx_buffer, DMA_ALIGNMENT).unwrap();
-    let (rx_buffer, rx_descriptors, _, _) = esp_hal::dma_buffers!(4, 0);
-    // info!(
-    //     "RX: {:p} len {} ({} descripters)",
-    //     rx_buffer.as_ptr(),
-    //     rx_buffer.len(),
-    //     rx_descriptors.len()
-    // );
+    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = esp_hal::dma_buffers!(4, 32_000);
     let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
+    let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
 
     // Creating SPI
     let sclk = p.GPIO4;
@@ -126,8 +102,8 @@ async fn main(_spawner: Spawner) {
     .with_dma(p.DMA_CH0)
     .with_buffers(dma_rx_buf, dma_tx_buf);
 
-    let mut disp_buffer: Vec<u8, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
-    disp_buffer.resize(W_ACTIVE as usize * H_ACTIVE as usize * 2, 0);
+    let mut disp_buffer: Vec<u8, &EspHeap> = Vec::new_in(&HEAP);
+    disp_buffer.resize(2048, 0);
 
     let res = Output::new(res, Level::Low, Default::default());
     let dc = Output::new(dc, Level::Low, Default::default());
