@@ -4,12 +4,13 @@
 
 use core::alloc::Layout;
 
-// use allocator_api2::{alloc::Allocator, vec::Vec};
+use alloc::{alloc::alloc_zeroed, vec};
+use allocator_api2::{alloc::Allocator, vec::Vec, boxed::Box};
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
-use esp_alloc::HEAP;
+use esp_alloc::{EspHeap, HEAP};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
@@ -31,7 +32,7 @@ use mipidsi::{
     TestImage,
 };
 use mipidsi::{models::ST7789, options::ColorInversion, Builder};
-// extern crate alloc;
+extern crate alloc;
 use embedded_graphics::{
     mono_font::{ascii::FONT_10X20, MonoTextStyle},
     pixelcolor::Rgb565,
@@ -43,11 +44,7 @@ use embedded_graphics::{
 };
 use log::{error, info};
 
-// static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
-
-// const DMA_BUFFER_SIZE: usize = 32000;
-// const DMA_ALIGNMENT: ExternalBurstConfig = ExternalBurstConfig::Size64;
-// const DMA_CHUNK_SIZE: usize = 4096 - DMA_ALIGNMENT as usize;
+static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
 
 // Display
 // Size
@@ -61,58 +58,24 @@ const W_ACTIVE: u16 = W - X_OFFSET;
 const H_ACTIVE: u16 = H - Y_OFFSET;
 
 #[esp_hal_embassy::main]
-async fn main(spawner: Spawner) {
+async fn main(_spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(CpuClock::max())
-        .with_psram(PsramConfig {
-            size: PsramSize::Size(2097152),
-            core_clock: SpiTimingConfigCoreClock::SpiTimingConfigCoreClock80m,
-            flash_frequency: FlashFreq::FlashFreq80m,
-            ram_frequency: SpiRamFreq::Freq40m,
-        });
-
-    let p = esp_hal::init(config);
-    // esp_alloc::heap_allocator!(size: 72 * 1024);
-    // let (start, size) = psram::psram_raw_parts(&p.PSRAM);
-    // unsafe {
-    //     PSRAM_ALLOCATOR.add_region(esp_alloc::HeapRegion::new(
-    //         start,
-    //         size,
-    //         esp_alloc::MemoryCapability::External.into(),
-    //     ));
-    // }
+    let p = esp_hal::init(esp_hal::Config::default());
+    esp_alloc::heap_allocator!(size: 100 * 1024);
+    let (start, size) = psram::psram_raw_parts(&p.PSRAM);
+    info!("PSRAM start: {}, size: {}", start as usize, size as usize);
+    unsafe {
+        PSRAM_ALLOCATOR.add_region(esp_alloc::HeapRegion::new(
+            start,
+            size,
+            esp_alloc::MemoryCapability::External.into(),
+        ));
+    }
 
     let timer0 = SystemTimer::new(p.SYSTIMER);
     esp_hal_embassy::init(timer0.alarm0);
 
     info!("Embassy initialized!");
-
-    let timer1 = TimerGroup::new(p.TIMG0);
-    // let _init: esp_wifi::EspWifiController<'_> = esp_wifi::init(timer1.timer0, esp_hal::rng::Rng::new(p.RNG), p.RADIO_CLK).unwrap();
-
-    // DMA for SPI
-    // let (_, tx_descriptors) =
-    //     esp_hal::dma_descriptors_chunk_size!(0, DMA_BUFFER_SIZE, DMA_CHUNK_SIZE);
-    // let layout =
-    //     core::alloc::Layout::from_size_align(DMA_BUFFER_SIZE, DMA_ALIGNMENT as usize).unwrap();
-    // let tx_buffer: &mut [u8] = unsafe { PSRAM_ALLOCATOR.allocate(layout).unwrap().as_mut() };
-    // info!(
-    //     "TX: {:p} len {} ({} descripters)",
-    //     tx_buffer.as_ptr(),
-    //     tx_buffer.len(),
-    //     tx_descriptors.len()
-    // );
-    // let dma_tx_buf =
-    //     DmaTxBuf::new_with_config(tx_descriptors, tx_buffer, DMA_ALIGNMENT).unwrap();
-    // let (rx_buffer, rx_descriptors, _, _) = esp_hal::dma_buffers!(4, 0);
-    // info!(
-    //     "RX: {:p} len {} ({} descripters)",
-    //     rx_buffer.as_ptr(),
-    //     rx_buffer.len(),
-    //     rx_descriptors.len()
-    // );
-    // let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
 
     // Creating SPI
     let sclk = p.GPIO4;
@@ -132,11 +95,22 @@ async fn main(spawner: Spawner) {
     .unwrap()
     .with_sck(sclk)
     .with_mosi(mosi);
-    // .with_dma(p.DMA_CH0)
-    // .with_buffers(dma_rx_buf, dma_tx_buf);
+    
 
-    let mut disp_buffer: [u8; W_ACTIVE as usize * H_ACTIVE as usize] =
-        [0; W_ACTIVE as usize * H_ACTIVE as usize];
+    // Playing with the heap, the error orrurs here, it works when I replace PSRAM_ALLOCATOR with HEAP
+    let mut vec_1: Vec<u8, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
+    vec_1.resize(64_000, 0);
+    info!("Buffer filled: {}", vec_1.len());
+
+    info!("creating display buffer");
+    let mut disp_buffer = Vec::new_in(&PSRAM_ALLOCATOR);
+    info!("display buffer created");
+    let size: usize = 256;
+    info!("resizing buffer");
+    disp_buffer.resize(size, 0);
+    info!("buffer resized");
+
+
     let res = Output::new(res, Level::Low, Default::default());
     let dc = Output::new(dc, Level::Low, Default::default());
     let cs = Output::new(cs, Level::High, Default::default());
@@ -154,35 +128,10 @@ async fn main(spawner: Spawner) {
         .reset_pin(res)
         .init(&mut delay)
         .unwrap();
+    info!("Display initialized!");
 
-    // // Text
-    // let char_w = 10;
-    // let char_h = 20;
-    // let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
-    // let text = "Hello World ^_^;";
-    // let mut text_x = W;
-    // let mut text_y = H / 2;
 
-    // // Create styles used by the drawing operations.
-    // let thin_stroke = PrimitiveStyle::with_stroke(Rgb565::CSS_LIME, 1);
-    // let thick_stroke = PrimitiveStyle::with_stroke(Rgb565::CSS_RED, 3);
-    // let border_stroke = PrimitiveStyleBuilder::new()
-    //     .stroke_color(Rgb565::WHITE)
-    //     .stroke_width(3)
-    //     .stroke_alignment(StrokeAlignment::Inside)
-    //     .build();
-
-    // let fill = PrimitiveStyle::with_fill(Rgb565::CSS_CYAN);
-    // let character_style = MonoTextStyle::new(&FONT_10X20, Rgb565::CSS_PINK);
-
-    // let yoffset = 14;
-
-    // // Draw a 3px wide outline around the display.
-    // display
-    //     .bounding_box()
-    //     .into_styled(border_stroke)
-    //     .draw(&mut display).unwrap();
-
+    info!("sending black bg");
     display
         .fill_solid(
             &Rectangle {
@@ -195,19 +144,18 @@ async fn main(spawner: Spawner) {
             Rgb565::BLACK,
         )
         .unwrap();
+    info!("sent, sleeping");
     Timer::after(Duration::from_secs(1)).await;
+    info!("sleeping test image");
     TestImage::new().draw(&mut display).unwrap();
+    info!("sent!");
 
-    // TODO: Spawn some tasks
-    let _ = spawner;
 
-    // info!("Global heap stats: {}", HEAP.stats());
-    // info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
+    info!("Global heap stats: {}", HEAP.stats());
+    info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
 
     loop {
         info!("Hello world!");
         Timer::after(Duration::from_secs(1)).await;
     }
-
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.0/examples/src/bin
 }

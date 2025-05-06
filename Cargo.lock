@@ -536,7 +536,6 @@ dependencies = [
  "esp32s3",
  "fugit",
  "instability",
- "log",
  "nb 1.1.0",
  "paste",
  "portable-atomic",
@@ -632,44 +631,6 @@ dependencies = [
  "ral-registers",
  "usb-device",
  "vcell",
-]
-
-[[package]]
-name = "esp-wifi"
-version = "0.13.0"
-source = "git+https://github.com/esp-rs/esp-hal?rev=16897bb68db9cc556f35d4639edbbb691a9bce51#16897bb68db9cc556f35d4639edbbb691a9bce51"
-dependencies = [
- "allocator-api2",
- "cfg-if",
- "critical-section",
- "document-features",
- "embassy-net-driver",
- "embedded-io",
- "embedded-io-async",
- "enumset",
- "esp-alloc",
- "esp-build",
- "esp-config",
- "esp-hal",
- "esp-metadata",
- "esp-wifi-sys",
- "log",
- "num-derive",
- "num-traits",
- "portable-atomic",
- "portable_atomic_enum",
- "rand_core 0.9.3",
- "xtensa-lx-rt",
-]
-
-[[package]]
-name = "esp-wifi-sys"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6b5438361891c431970194a733415006fb3d00b6eb70b3dcb66fd58f04d9b39"
-dependencies = [
- "anyhow",
- "log",
 ]
 
 [[package]]
@@ -899,17 +860,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d5439c4ad607c3c23abf66de8c8bf57ba8adcd1f129e699851a6e43935d339d"
 
 [[package]]
-name = "num-derive"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed3955f1a9c7c0c15e092f9c887db08b1fc683305fdf6eb6684f22555355e202"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -950,27 +900,6 @@ name = "portable-atomic"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "350e9b48cbc6b0e028b0473b114454c6316e57336ee184ceab6e53f72c178b3e"
-
-[[package]]
-name = "portable_atomic_enum"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30d48f60c43e0120bb2bb48589a16d4bed2f4b911be41e299f2d0fc0e0e20885"
-dependencies = [
- "portable-atomic",
- "portable_atomic_enum_macros",
-]
-
-[[package]]
-name = "portable_atomic_enum_macros"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a33fa6ec7f2047f572d49317cca19c87195de99c6e5b6ee492da701cfe02b053"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "proc-macro-crate"
@@ -1117,7 +1046,6 @@ dependencies = [
  "esp-hal",
  "esp-hal-embassy",
  "esp-println",
- "esp-wifi",
  "heapless",
  "log",
  "mipidsi",
@@ -1462,3 +1390,8 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[patch.unused]]
+name = "esp-wifi"
+version = "0.13.0"
+source = "git+https://github.com/esp-rs/esp-hal?rev=16897bb68db9cc556f35d4639edbbb691a9bce51#16897bb68db9cc556f35d4639edbbb691a9bce51"
