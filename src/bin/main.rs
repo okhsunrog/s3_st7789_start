@@ -39,7 +39,7 @@ use embedded_graphics::{
     pixelcolor::Rgb565,
     prelude::*,
     primitives::{
-        Circle, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StrokeAlignment, Triangle,
+        Circle, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StrokeAlignment, Styled, Triangle,
     },
     text::{Alignment, Text},
 };
@@ -135,35 +135,41 @@ async fn main(_spawner: Spawner) {
         .unwrap();
     info!("Display initialized!");
 
-    let mut data: Vec<Rgb565, &EspHeap> = Vec::new_in(&HEAP);
+    let mut data: Vec<Rgb565, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
     data.resize(FULL_FRAME_SIZE / 2, Rgb565::BLACK);
-    let mut fbuf = FrameBuf::new(data.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+    {
+        let mut fbuf = FrameBuf::new(data.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+        Rectangle {
+            top_left: Point { x: 0, y: 0 },
+            size: Size {
+                width: W_ACTIVE as u32,
+                height: H_ACTIVE as u32,
+            },
+        }
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(&mut fbuf)
+        .unwrap();
+    }
+    display
+        .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, data)
+        .await
+        .unwrap();
 
-    //let start = Instant::now();
-    // display
-    //     .fill_solid(
-    //         &Rectangle {
-    //             top_left: Point { x: 0, y: 0 },
-    //             size: Size {
-    //                 width: W_ACTIVE as u32,
-    //                 height: H_ACTIVE as u32,
-    //             },
-    //         },
-    //         Rgb565::BLACK,
-    //     )
-    //     .unwrap();
-    // let elapsed = start.elapsed();
-    // info!("Filled and sent in {}us", elapsed.as_micros());
     Timer::after(Duration::from_secs(1)).await;
 
+
+    let mut data2: Vec<Rgb565, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
+    data2.resize(FULL_FRAME_SIZE / 2, Rgb565::BLACK);
+    let mut fbuf2 = FrameBuf::new(data2.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+
     let start = Instant::now();
-    TestImage::new().draw(&mut fbuf).unwrap();
+    TestImage::new().draw(&mut fbuf2).unwrap();
     let elapsed = start.elapsed();
     info!("Drew image in {}us", elapsed.as_micros());
 
     let start = Instant::now();
     display
-        .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, data)
+        .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, data2)
         .await
         .unwrap();
     let elapsed = start.elapsed();
