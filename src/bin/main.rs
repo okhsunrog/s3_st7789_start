@@ -115,7 +115,6 @@ async fn main(_spawner: Spawner) {
         .unwrap();
     info!("Display initialized!");
 
-    info!("sending black bg");
     display
         .fill_solid(
             &Rectangle {
@@ -128,17 +127,14 @@ async fn main(_spawner: Spawner) {
             Rgb565::BLACK,
         )
         .unwrap();
-    info!("sent, sleeping");
     Timer::after(Duration::from_secs(1)).await;
-    info!("sleeping test image");
     TestImage::new().draw(&mut display).unwrap();
-    info!("sent!");
 
     info!("Global heap stats: {}", HEAP.stats());
     info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
 
     loop {
         info!("Hello world!");
-        Timer::after(Duration::from_secs(1)).await;
+        Timer::after(Duration::from_secs(3)).await;
     }
 }
