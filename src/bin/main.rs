@@ -83,9 +83,6 @@ async fn main(_spawner: Spawner) {
     let res = p.GPIO6;
     let dc = p.GPIO7;
     let cs = p.GPIO15;
-
-    // Need to set miso first so that mosi can overwrite the
-    // output connection (because we are using the same pin to loop back)
     let spi = Spi::new(
         p.SPI2,
         Config::default()
