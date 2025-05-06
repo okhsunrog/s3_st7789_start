@@ -5,7 +5,7 @@
 use core::alloc::Layout;
 
 use alloc::{alloc::alloc_zeroed, vec};
-use allocator_api2::{alloc::Allocator, vec::Vec, boxed::Box};
+use allocator_api2::{alloc::Allocator, boxed::Box, vec::Vec};
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Timer};
@@ -92,21 +92,9 @@ async fn main(_spawner: Spawner) {
     .unwrap()
     .with_sck(sclk)
     .with_mosi(mosi);
-    
 
-    // Playing with the heap, the error orrurs here, it works when I replace PSRAM_ALLOCATOR with HEAP
-    let mut vec_1: Vec<u8, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
-    vec_1.resize(64_000, 0);
-    info!("Buffer filled: {}", vec_1.len());
-
-    info!("creating display buffer");
-    let mut disp_buffer = Vec::new_in(&PSRAM_ALLOCATOR);
-    info!("display buffer created");
-    let size: usize = 256;
-    info!("resizing buffer");
-    disp_buffer.resize(size, 0);
-    info!("buffer resized");
-
+    let mut disp_buffer: Vec<u8, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
+    disp_buffer.resize(W_ACTIVE as usize * H_ACTIVE as usize * 2, 0);
 
     let res = Output::new(res, Level::Low, Default::default());
     let dc = Output::new(dc, Level::Low, Default::default());
@@ -127,7 +115,6 @@ async fn main(_spawner: Spawner) {
         .unwrap();
     info!("Display initialized!");
 
-
     info!("sending black bg");
     display
         .fill_solid(
@@ -146,7 +133,6 @@ async fn main(_spawner: Spawner) {
     info!("sleeping test image");
     TestImage::new().draw(&mut display).unwrap();
     info!("sent!");
-
 
     info!("Global heap stats: {}", HEAP.stats());
     info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
