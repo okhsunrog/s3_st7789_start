@@ -6,24 +6,24 @@ use core::alloc::Layout;
 
 use alloc::{alloc::alloc_zeroed, vec};
 use allocator_api2::{alloc::Allocator, boxed::Box, vec::Vec};
+use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Instant, Timer};
-use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_alloc::{EspHeap, HEAP};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
-    dma::{DmaRxBuf, DmaTxBuf, ExternalBurstConfig},
+    dma::{DmaRxBuf, DmaTxBuf},
     gpio::{Level, Output},
-    peripherals::DMA,
-    psram::{self, FlashFreq, PsramConfig, PsramSize, SpiRamFreq, SpiTimingConfigCoreClock},
+    psram::{self, FlashFreq, PsramConfig, PsramSize},
     spi::{
         master::{Config, Spi, SpiDmaBus},
         Mode,
     },
     time::Rate,
-    timer::{systimer::SystemTimer, timg::TimerGroup},
+    timer::systimer::SystemTimer,
     Async,
 };
 use mipidsi::{
@@ -32,6 +32,7 @@ use mipidsi::{
     TestImage,
 };
 use mipidsi::{models::ST7789, options::ColorInversion, Builder};
+use static_cell::StaticCell;
 extern crate alloc;
 use embedded_graphics::{
     mono_font::{ascii::FONT_10X20, MonoTextStyle},
@@ -42,6 +43,7 @@ use embedded_graphics::{
     },
     text::{Alignment, Text},
 };
+use embedded_graphics_framebuf::FrameBuf;
 use log::{error, info};
 
 static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
@@ -54,8 +56,10 @@ const H: u16 = 320;
 const X_OFFSET: u16 = 35;
 const Y_OFFSET: u16 = 0;
 // Active area
-const W_ACTIVE: u16 = W - X_OFFSET; //170
-const H_ACTIVE: u16 = H - Y_OFFSET; //320
+const W_ACTIVE: usize = (W - X_OFFSET) as usize; //170
+const H_ACTIVE: usize = (H - Y_OFFSET) as usize; //320
+
+const FULL_FRAME_SIZE: usize = W_ACTIVE as usize * H_ACTIVE as usize * 2;
 
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) {
@@ -66,7 +70,7 @@ async fn main(_spawner: Spawner) {
         .with_cpu_clock(CpuClock::_240MHz)
         .with_psram(psram_conf);
     let p = esp_hal::init(conf);
-    esp_alloc::heap_allocator!(size: 100 * 1024);
+    esp_alloc::heap_allocator!(size: 150_000);
     let (start, size) = psram::psram_raw_parts(&p.PSRAM);
     info!("PSRAM start: {}, size: {}", start as usize, size as usize);
     unsafe {
@@ -100,7 +104,8 @@ async fn main(_spawner: Spawner) {
     .with_sck(sclk)
     .with_mosi(mosi)
     .with_dma(p.DMA_CH0)
-    .with_buffers(dma_rx_buf, dma_tx_buf);
+    .with_buffers(dma_rx_buf, dma_tx_buf)
+    .into_async();
 
     let mut disp_buffer: Vec<u8, &EspHeap> = Vec::new_in(&HEAP);
     disp_buffer.resize(2048, 0);
@@ -108,11 +113,16 @@ async fn main(_spawner: Spawner) {
     let res = Output::new(res, Level::Low, Default::default());
     let dc = Output::new(dc, Level::Low, Default::default());
     let cs = Output::new(cs, Level::High, Default::default());
-    let spi_device = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
+
+    static SPI_BUS: StaticCell<Mutex<NoopRawMutex, SpiDmaBus<'static, Async>>> = StaticCell::new();
+    let spi_bus = Mutex::new(spi);
+    let spi_bus = SPI_BUS.init(spi_bus);
+    let spi_device = SpiDevice::new(spi_bus, cs);
+
     let di = SpiInterface::new(spi_device, dc, &mut disp_buffer);
     let mut delay = embassy_time::Delay;
     let mut display = Builder::new(ST7789, di)
-        .display_size(W_ACTIVE, H_ACTIVE)
+        .display_size(W_ACTIVE as u16, H_ACTIVE as u16)
         .display_offset(X_OFFSET, Y_OFFSET)
         .refresh_order(RefreshOrder {
             vertical: VerticalRefreshOrder::BottomToTop,
@@ -121,32 +131,45 @@ async fn main(_spawner: Spawner) {
         .invert_colors(ColorInversion::Inverted)
         .reset_pin(res)
         .init(&mut delay)
+        .await
         .unwrap();
     info!("Display initialized!");
 
-    let start = Instant::now();
-    display
-        .fill_solid(
-            &Rectangle {
-                top_left: Point { x: 0, y: 0 },
-                size: Size {
-                    width: W_ACTIVE as u32,
-                    height: H_ACTIVE as u32,
-                },
-            },
-            Rgb565::BLACK,
-        )
-        .unwrap();
-    let elapsed = start.elapsed();
-    info!("Filled and sent in {}us", elapsed.as_micros());
+    let mut data: Vec<Rgb565, &EspHeap> = Vec::new_in(&HEAP);
+    data.resize(FULL_FRAME_SIZE / 2, Rgb565::BLACK);
+    let mut fbuf = FrameBuf::new(data.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+
+    //let start = Instant::now();
+    // display
+    //     .fill_solid(
+    //         &Rectangle {
+    //             top_left: Point { x: 0, y: 0 },
+    //             size: Size {
+    //                 width: W_ACTIVE as u32,
+    //                 height: H_ACTIVE as u32,
+    //             },
+    //         },
+    //         Rgb565::BLACK,
+    //     )
+    //     .unwrap();
+    // let elapsed = start.elapsed();
+    // info!("Filled and sent in {}us", elapsed.as_micros());
     Timer::after(Duration::from_secs(1)).await;
 
     let start = Instant::now();
-    TestImage::new().draw(&mut display).unwrap();
+    TestImage::new().draw(&mut fbuf).unwrap();
     let elapsed = start.elapsed();
     info!("Drew image in {}us", elapsed.as_micros());
 
-    //info!("Global heap stats: {}", HEAP.stats());
+    let start = Instant::now();
+    display
+        .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, data)
+        .await
+        .unwrap();
+    let elapsed = start.elapsed();
+    info!("Sent in {}us", elapsed.as_micros());
+
+    info!("Global heap stats: {}", HEAP.stats());
     info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
 
     loop {

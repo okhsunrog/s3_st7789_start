@@ -162,10 +162,10 @@ dependencies = [
 [[package]]
 name = "embassy-embedded-hal"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41fea5ef5bed4d3468dfd44f5c9fa4cda8f54c86d4fb4ae683eacf9d39e2ea12"
+source = "git+https://github.com/embassy-rs/embassy?rev=966914f4654f30f13964f90c1e2bd491f1105c6f#966914f4654f30f13964f90c1e2bd491f1105c6f"
 dependencies = [
- "embassy-futures",
+ "embassy-futures 0.1.1 (git+https://github.com/embassy-rs/embassy?rev=966914f4654f30f13964f90c1e2bd491f1105c6f)",
+ "embassy-hal-internal",
  "embassy-sync",
  "embassy-time",
  "embedded-hal 0.2.7",
@@ -202,6 +202,19 @@ name = "embassy-futures"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f878075b9794c1e4ac788c95b728f26aa6366d32eeb10c7051389f898f7d067"
+
+[[package]]
+name = "embassy-futures"
+version = "0.1.1"
+source = "git+https://github.com/embassy-rs/embassy?rev=966914f4654f30f13964f90c1e2bd491f1105c6f#966914f4654f30f13964f90c1e2bd491f1105c6f"
+
+[[package]]
+name = "embassy-hal-internal"
+version = "0.2.0"
+source = "git+https://github.com/embassy-rs/embassy?rev=966914f4654f30f13964f90c1e2bd491f1105c6f#966914f4654f30f13964f90c1e2bd491f1105c6f"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "embassy-sync"
@@ -276,6 +289,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-dma"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "994f7e5b5cb23521c22304927195f236813053eb9c065dd2226a32ba64695446"
+dependencies = [
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "embedded-graphics"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -296,6 +318,15 @@ checksum = "ba9ecd261f991856250d2207f6d8376946cd9f412a2165d3b75bc87a0bc7a044"
 dependencies = [
  "az",
  "byteorder",
+]
+
+[[package]]
+name = "embedded-graphics-framebuf"
+version = "0.5.0"
+source = "git+https://github.com/bernii/embedded-graphics-framebuf?rev=bf8a546911a31848b437765036e77a94d8ba7b10#bf8a546911a31848b437765036e77a94d8ba7b10"
+dependencies = [
+ "embedded-dma",
+ "embedded-graphics",
 ]
 
 [[package]]
@@ -320,16 +351,6 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c4c685bbef7fe13c3c6dd4da26841ed3980ef33e841cddfa15ce8a8fb3f1884"
 dependencies = [
- "embedded-hal 1.0.0",
-]
-
-[[package]]
-name = "embedded-hal-bus"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "513e0b3a8fb7d3013a8ae17a834283f170deaf7d0eeab0a7c1a36ad4dd356d22"
-dependencies = [
- "critical-section",
  "embedded-hal 1.0.0",
 ]
 
@@ -464,7 +485,7 @@ dependencies = [
  "digest",
  "document-features",
  "embassy-embedded-hal",
- "embassy-futures",
+ "embassy-futures 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "embassy-sync",
  "embassy-usb-driver",
  "embassy-usb-synopsys-otg",
@@ -777,13 +798,12 @@ dependencies = [
 [[package]]
 name = "mipidsi"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ba34dcbf61182ffa6992b5a4d9b566d5a99df127fd93f6d314213347329e92f"
+source = "git+https://github.com/bagbag/mipidsi?rev=09a2f02fcf03444066c48506e7816592a7dabf69#09a2f02fcf03444066c48506e7816592a7dabf69"
 dependencies = [
  "embedded-graphics-core",
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "heapless",
- "nb 1.1.0",
 ]
 
 [[package]]
@@ -975,11 +995,12 @@ version = "0.1.0"
 dependencies = [
  "allocator-api2",
  "critical-section",
+ "embassy-embedded-hal",
  "embassy-executor",
  "embassy-sync",
  "embassy-time",
  "embedded-graphics",
- "embedded-hal-bus",
+ "embedded-graphics-framebuf",
  "embedded-io",
  "embedded-io-async",
  "esp-alloc",

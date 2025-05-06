@@ -46,10 +46,11 @@ esp-hal-embassy = { version = "0.7.0", features = ["esp32s3"] }
 heapless = { version = "0.8.0", default-features = false }
 static_cell = { version = "2.1.0", features = ["nightly"] }
 allocator-api2 = { version = "0.2.0", default-features = false, features = ["alloc"] }
-mipidsi = "0.9.0"
+mipidsi = { git = "https://github.com/bagbag/mipidsi", rev = "09a2f02fcf03444066c48506e7816592a7dabf69" }
+embassy-embedded-hal = "0.3.0"
 embassy-sync = "0.6.2"
 embedded-graphics = "0.8.1"
-embedded-hal-bus = "0.3.0"
+embedded-graphics-framebuf = { git = "https://github.com/bernii/embedded-graphics-framebuf", rev = "bf8a546911a31848b437765036e77a94d8ba7b10" }
 
 [profile.dev]
 # Rust debug is too slow.
@@ -77,3 +78,4 @@ embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "966914f46
 embassy-time-driver = { git = "https://github.com/embassy-rs/embassy", rev = "966914f4654f30f13964f90c1e2bd491f1105c6f" }
 embassy-time-queue-utils = { git = "https://github.com/embassy-rs/embassy", rev = "966914f4654f30f13964f90c1e2bd491f1105c6f" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "966914f4654f30f13964f90c1e2bd491f1105c6f" }
+embassy-embedded-hal = { git = "https://github.com/embassy-rs/embassy", rev = "966914f4654f30f13964f90c1e2bd491f1105c6f" }
