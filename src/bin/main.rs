@@ -257,20 +257,24 @@ async fn main(spawner: Spawner) {
     // Initialize the first frame with black
     {
         let mut fbuf = FrameBuf::new(frame_a.as_mut_slice(), W_ACTIVE, H_ACTIVE);
-        Rectangle {
-            top_left: Point { x: 0, y: 0 },
-            size: Size {
-                width: W_ACTIVE as u32,
-                height: H_ACTIVE as u32,
-            },
-        }
-        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-        .draw(&mut fbuf)
-        .unwrap();
+        Rectangle::new(Point::new(0, 0), Size::new(W_ACTIVE as u32, H_ACTIVE as u32))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+            .draw(&mut fbuf)
+            .unwrap();
+    }
+    {
+        let mut fbuf = FrameBuf::new(frame_b.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+        Rectangle::new(Point::new(0, 0), Size::new(W_ACTIVE as u32, H_ACTIVE as u32))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+            .draw(&mut fbuf)
+            .unwrap();
     }
 
-    // Signal the first frame as ready
-    NEXT_FRAME.signal(frame_a);
+    // Signal the first frame as ready to display
+    READY_FRAME.signal(frame_a);
+    
+    // Start with the second frame for drawing
+    let mut current_frame = frame_b;
     
     // Spawn the display task
     spawner.spawn(display_task(display)).unwrap();
@@ -279,33 +283,21 @@ async fn main(spawner: Spawner) {
     let mut ticker = Ticker::every(Duration::from_millis(1));
     
     loop {
-        // Wait for the next frame buffer to be available
-        let mut frame = NEXT_FRAME.wait().await;
-        
-        // Draw to the frame
+        // Draw to the current frame (we don't wait for NEXT_FRAME)
         {
-            let mut fbuf = FrameBuf::new(frame.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+            let mut fbuf = FrameBuf::new(current_frame.as_mut_slice(), W_ACTIVE, H_ACTIVE);
             
             // Clear with black
-            Rectangle {
-                top_left: Point { x: 0, y: 0 },
-                size: Size {
-                    width: W_ACTIVE as u32,
-                    height: H_ACTIVE as u32,
-                },
-            }
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-            .draw(&mut fbuf)
-            .unwrap();
+            Rectangle::new(Point::new(0, 0), Size::new(W_ACTIVE as u32, H_ACTIVE as u32))
+                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+                .draw(&mut fbuf)
+                .unwrap();
             
             // Draw the moving rectangle
-            Rectangle {
-                top_left: Point { x: animation_state.rect_x, y: 70 },
-                size: Size {
-                    width: RECT_WIDTH,
-                    height: RECT_HEIGHT,
-                },
-            }
+            Rectangle::new(
+                Point::new(animation_state.rect_x, 70),
+                Size::new(RECT_WIDTH, RECT_HEIGHT),
+            )
             .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
             .draw(&mut fbuf)
             .unwrap();
@@ -328,7 +320,10 @@ async fn main(spawner: Spawner) {
         update_animation_state(&mut animation_state);
         
         // Signal that the frame is ready for display
-        READY_FRAME.signal(frame);
+        READY_FRAME.signal(current_frame);
+        
+        // Get the next frame buffer (this will wait if necessary)
+        current_frame = NEXT_FRAME.wait().await;
         
         // Update FPS counter
         fps_counter += 1;
