@@ -207,6 +207,8 @@ async fn main(_spawner: Spawner) {
     // FPS tracking variables
     let mut fps_counter = 0;
     let mut last_fps_update = Instant::now();
+    let mut frame_time_sum = 0u64;
+    let mut frame_count = 0;
 
     // Animation loop
     loop {
@@ -220,18 +222,32 @@ async fn main(_spawner: Spawner) {
 
         // Update FPS counter
         fps_counter += 1;
+        
+        // Calculate frame time for statistics
+        let frame_time = frame_start.elapsed();
+        frame_time_sum += frame_time.as_micros() as u64;
+        frame_count += 1;
+        
         if last_fps_update.elapsed().as_millis() >= 1000 {
             animation_state.fps = fps_counter;
             fps_counter = 0;
+            
+            // Log FPS and average frame time
+            let avg_frame_time = if frame_count > 0 { frame_time_sum / frame_count } else { 0 };
+            //info!("Current FPS: {}, Avg frame time: {}µs", animation_state.fps, avg_frame_time);
+            
+            // Reset statistics
+            frame_time_sum = 0;
+            frame_count = 0;
             last_fps_update = Instant::now();
-            info!("Current FPS: {}", animation_state.fps);
         }
-
-        // Calculate frame time and try to maintain a consistent frame rate
-        let frame_time = frame_start.elapsed();
+        
+        // FPS limiting code is commented out to test maximum FPS
+        /*
         if frame_time.as_millis() < 16 {  // Target ~60 FPS
             let delay_time = Duration::from_millis(16) - frame_time;
             Timer::after(delay_time).await;
         }
+        */
     }
 }
