@@ -57,6 +57,11 @@ const Y_OFFSET: u16 = 0;
 const W_ACTIVE: u16 = W - X_OFFSET; //170
 const H_ACTIVE: u16 = H - Y_OFFSET; //320
 
+// Animation constants
+const RECT_WIDTH: u32 = 40;
+const RECT_HEIGHT: u32 = 30;
+const RECT_SPEED: i32 = 3;
+
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
@@ -126,7 +131,7 @@ async fn main(_spawner: Spawner) {
         .unwrap();
     info!("Display initialized!");
 
-    let start = Instant::now();
+    // Initial screen clear
     display
         .fill_solid(
             &Rectangle {
@@ -139,20 +144,87 @@ async fn main(_spawner: Spawner) {
             Rgb565::BLACK,
         )
         .unwrap();
-    let elapsed = start.elapsed();
-    info!("Filled and sent in {}us", elapsed.as_micros());
-    Timer::after(Duration::from_secs(1)).await;
 
-    let start = Instant::now();
-    TestImage::new().draw(&mut display).unwrap();
-    let elapsed = start.elapsed();
-    info!("Drew image in {}us", elapsed.as_micros());
+    // Animation variables
+    let mut rect_x = 0;
+    let mut direction = 1; // 1 = right, -1 = left
+    let mut fps_counter = 0;
+    let mut fps = 0;
+    let mut last_fps_update = Instant::now();
+    let mut last_frame_time = Instant::now();
 
-    info!("Global heap stats: {}", HEAP.stats());
-    info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
+    // Text style for FPS counter
+    let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
 
+    // Animation loop
     loop {
-        info!("Hello world!");
-        Timer::after(Duration::from_secs(3)).await;
+        let frame_start = Instant::now();
+
+        // Clear screen
+        display
+            .fill_solid(
+                &Rectangle {
+                    top_left: Point { x: 0, y: 0 },
+                    size: Size {
+                        width: W_ACTIVE as u32,
+                        height: H_ACTIVE as u32,
+                    },
+                },
+                Rgb565::BLACK,
+            )
+            .unwrap();
+
+        // Draw the moving rectangle
+        display
+            .fill_solid(
+                &Rectangle {
+                    top_left: Point { x: rect_x, y: 50 },
+                    size: Size {
+                        width: RECT_WIDTH,
+                        height: RECT_HEIGHT,
+                    },
+                },
+                Rgb565::RED,
+            )
+            .unwrap();
+
+        // Draw FPS text at the bottom
+        let fps_text = alloc::format!("FPS: {}", fps);
+        Text::with_alignment(
+            &fps_text,
+            Point::new(W_ACTIVE as i32 / 2, H_ACTIVE as i32 - 20),
+            text_style,
+            Alignment::Center,
+        )
+        .draw(&mut display)
+        .unwrap();
+
+        // Update rectangle position
+        rect_x += direction * RECT_SPEED;
+
+        // Check for bouncing
+        if rect_x <= 0 {
+            rect_x = 0;
+            direction = 1;
+        } else if rect_x as u32 + RECT_WIDTH >= W_ACTIVE as u32 {
+            rect_x = (W_ACTIVE as u32 - RECT_WIDTH) as i32;
+            direction = -1;
+        }
+
+        // Update FPS counter
+        fps_counter += 1;
+        if last_fps_update.elapsed().as_millis() >= 1000 {
+            fps = fps_counter;
+            fps_counter = 0;
+            last_fps_update = Instant::now();
+            info!("Current FPS: {}", fps);
+        }
+
+        // Calculate frame time and try to maintain a consistent frame rate
+        let frame_time = frame_start.elapsed();
+        if frame_time.as_millis() < 16 {  // Target ~60 FPS
+            let delay_time = Duration::from_millis(16) - frame_time;
+            Timer::after(delay_time).await;
+        }
     }
 }
