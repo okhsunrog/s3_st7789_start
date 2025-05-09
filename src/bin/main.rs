@@ -2,22 +2,21 @@
 #![no_main]
 #![feature(allocator_api)]
 
-use core::alloc::Layout;
-
-use alloc::{alloc::alloc_zeroed, vec, format};
-use allocator_api2::{alloc::Allocator, boxed::Box, vec::Vec};
+use alloc::{format, vec};
+use allocator_api2::{alloc::Allocator, vec::Vec};
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::mutex::Mutex;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_sync::signal::Signal;
+use embassy_time::{Duration, Instant, Ticker};
 use esp_alloc::{EspHeap, HEAP};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
     gpio::{Level, Output},
-    psram::{self, FlashFreq, PsramConfig, PsramSize},
+    psram::{self, PsramConfig, PsramSize},
     spi::{
         master::{Config, Spi, SpiDmaBus},
         Mode,
@@ -28,25 +27,24 @@ use esp_hal::{
 };
 use mipidsi::{
     interface::SpiInterface,
-    options::{HorizontalRefreshOrder, RefreshOrder, VerticalRefreshOrder},
-    TestImage,
+    models::ST7789,
+    options::{ColorInversion, HorizontalRefreshOrder, RefreshOrder, VerticalRefreshOrder},
+    Builder,
 };
-use mipidsi::{models::ST7789, options::ColorInversion, Builder};
 use static_cell::StaticCell;
 extern crate alloc;
 use embedded_graphics::{
     mono_font::{ascii::FONT_10X20, MonoTextStyle},
     pixelcolor::Rgb565,
     prelude::*,
-    primitives::{
-        Circle, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StrokeAlignment, Styled, Triangle,
-    },
+    primitives::{PrimitiveStyle, Rectangle},
     text::{Alignment, Text},
 };
 use embedded_graphics_framebuf::FrameBuf;
-use log::{error, info};
+use log::info;
 
 static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
+static mut SMALL_BUFFER: [u8; 2048] = [0u8; 2048];
 
 // Display
 // Size
@@ -58,7 +56,6 @@ const Y_OFFSET: u16 = 0;
 // Active area
 const W_ACTIVE: usize = (W - X_OFFSET) as usize; //170
 const H_ACTIVE: usize = (H - Y_OFFSET) as usize; //320
-const FULL_FRAME_SIZE: usize = W_ACTIVE as usize * H_ACTIVE as usize * 2;
 
 // Animation constants
 const RECT_WIDTH: u32 = 40;
@@ -116,8 +113,50 @@ impl<'a> Iterator for FrameBufferIterator<'a> {
     }
 }
 
+// Define our frame type
+type Frame = Vec<Rgb565, &'static EspHeap>;
+
+// Signals for frame synchronization - using CriticalSectionRawMutex which is Sync
+static NEXT_FRAME: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
+static READY_FRAME: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
+
+// Display type alias
+type DisplayType = mipidsi::Display<
+    SpiInterface<'static,
+        SpiDevice<'static, NoopRawMutex, SpiDmaBus<'static, Async>, Output<'static>>,
+        Output<'static>
+    >,
+    ST7789,
+    Output<'static>
+>;
+
+
+// Display task that handles sending frames to the display
+#[embassy_executor::task]
+async fn display_task(mut display: DisplayType) {
+    let mut frame = READY_FRAME.wait().await;
+    
+    loop {
+        // Send the frame to the display
+        display
+            .set_pixels(
+                0, 
+                0, 
+                W_ACTIVE as u16 - 1, 
+                H_ACTIVE as u16 - 1, 
+                FrameBufferIterator::new(&frame)
+            )
+            .await
+            .unwrap();
+        
+        // Signal that we're ready for the next frame and wait for it
+        NEXT_FRAME.signal(frame);
+        frame = READY_FRAME.wait().await;
+    }
+}
+
 #[esp_hal_embassy::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
     let mut psram_conf = PsramConfig::default();
     psram_conf.size = PsramSize::Size(8 * 1024 * 1024);
@@ -164,8 +203,8 @@ async fn main(_spawner: Spawner) {
     .with_buffers(dma_rx_buf, dma_tx_buf)
     .into_async();
 
-    let mut disp_buffer: Vec<u8, &EspHeap> = Vec::new_in(&HEAP);
-    disp_buffer.resize(2048, 0);
+    // Small buffer for SpiInterface - we only need a minimal buffer since we're not using it for drawing
+    let small_buffer = unsafe { &mut SMALL_BUFFER };
 
     let res = Output::new(res, Level::Low, Default::default());
     let dc = Output::new(dc, Level::Low, Default::default());
@@ -176,9 +215,9 @@ async fn main(_spawner: Spawner) {
     let spi_bus = SPI_BUS.init(spi_bus);
     let spi_device = SpiDevice::new(spi_bus, cs);
     
-    let di = SpiInterface::new(spi_device, dc, &mut disp_buffer);
+    let di = SpiInterface::new(spi_device, dc, small_buffer);
     let mut delay = embassy_time::Delay;
-    let mut display = Builder::new(ST7789, di)
+    let display = Builder::new(ST7789, di)
         .display_size(W_ACTIVE as u16, H_ACTIVE as u16)
         .display_offset(X_OFFSET, Y_OFFSET)
         .refresh_order(RefreshOrder {
@@ -205,17 +244,19 @@ async fn main(_spawner: Spawner) {
     let mut last_fps_update = Instant::now();
 
     // Create two frame buffers for double buffering
-    let mut frame_buffer1: Vec<Rgb565, &EspHeap> = Vec::new_in(&HEAP);
-    let mut frame_buffer2: Vec<Rgb565, &EspHeap> = Vec::new_in(&HEAP);
+    // You can choose to allocate these in PSRAM or internal memory based on your performance needs
+    let mut frame_a: Frame = Vec::new_in(&HEAP);
+    let mut frame_b: Frame = Vec::new_in(&HEAP);
     
-    frame_buffer1.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
-    frame_buffer2.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
+    frame_a.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
+    frame_b.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
+
     info!("Global heap stats: {}", HEAP.stats());
     info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
 
-    // Initial black screen
+    // Initialize the first frame with black
     {
-        let mut fbuf = FrameBuf::new(frame_buffer1.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+        let mut fbuf = FrameBuf::new(frame_a.as_mut_slice(), W_ACTIVE, H_ACTIVE);
         Rectangle {
             top_left: Point { x: 0, y: 0 },
             size: Size {
@@ -228,29 +269,22 @@ async fn main(_spawner: Spawner) {
         .unwrap();
     }
 
-    // Send initial frame
-    display
-        .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, FrameBufferIterator::new(&frame_buffer1))
-        .await
-        .unwrap();
-
-    // Double buffering variables
-    let mut current_buffer = 1; // 1 = frame_buffer1, 2 = frame_buffer2
+    // Signal the first frame as ready
+    NEXT_FRAME.signal(frame_a);
     
-    // Animation loop
+    // Spawn the display task
+    spawner.spawn(display_task(display)).unwrap();
+    
+    // Main rendering loop
+    let mut ticker = Ticker::every(Duration::from_millis(1));
+    
     loop {
-        let frame_start = Instant::now();
+        // Wait for the next frame buffer to be available
+        let mut frame = NEXT_FRAME.wait().await;
         
-        // Select the buffer to draw to (the one not being sent to display)
-        let draw_buffer = if current_buffer == 1 {
-            &mut frame_buffer2
-        } else {
-            &mut frame_buffer1
-        };
-        
-        // Draw to the selected buffer
+        // Draw to the frame
         {
-            let mut fbuf = FrameBuf::new(draw_buffer.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+            let mut fbuf = FrameBuf::new(frame.as_mut_slice(), W_ACTIVE, H_ACTIVE);
             
             // Clear with black
             Rectangle {
@@ -293,27 +327,8 @@ async fn main(_spawner: Spawner) {
         // Update animation state for next frame
         update_animation_state(&mut animation_state);
         
-        // Select the buffer to send to display (the one we just finished drawing)
-        let display_buffer = if current_buffer == 1 {
-            &frame_buffer1
-        } else {
-            &frame_buffer2
-        };
-        
-        // Send the buffer to display
-        display
-            .set_pixels(
-                0, 
-                0, 
-                W_ACTIVE as u16 - 1, 
-                H_ACTIVE as u16 - 1, 
-                FrameBufferIterator::new(display_buffer)
-            )
-            .await
-            .unwrap();
-        
-        // Swap buffers for next frame
-        current_buffer = if current_buffer == 1 { 2 } else { 1 };
+        // Signal that the frame is ready for display
+        READY_FRAME.signal(frame);
         
         // Update FPS counter
         fps_counter += 1;
@@ -323,5 +338,8 @@ async fn main(_spawner: Spawner) {
             fps_counter = 0;
             last_fps_update = Instant::now();
         }
+        
+        // Pace the rendering
+        ticker.next().await;
     }
 }
