@@ -70,7 +70,8 @@ async fn main(_spawner: Spawner) {
         .with_cpu_clock(CpuClock::_240MHz)
         .with_psram(psram_conf);
     let p = esp_hal::init(conf);
-    esp_alloc::heap_allocator!(size: 150_000);
+    esp_alloc::heap_allocator!(#[unsafe(link_section = ".dram2_uninit")] size: 64000);
+    esp_alloc::heap_allocator!(size: 150 * 1024);
     let (start, size) = psram::psram_raw_parts(&p.PSRAM);
     info!("PSRAM start: {}, size: {}", start as usize, size as usize);
     unsafe {
