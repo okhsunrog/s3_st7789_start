@@ -50,6 +50,7 @@ mipidsi = "0.9.0"
 embassy-sync = "0.6.2"
 embedded-graphics = "0.8.1"
 embedded-hal-bus = "0.3.0"
+embedded-graphics-framebuf = { git = "https://github.com/bernii/embedded-graphics-framebuf", rev = "bf8a546911a31848b437765036e77a94d8ba7b10" }
 
 [profile.dev]
 # Rust debug is too slow.

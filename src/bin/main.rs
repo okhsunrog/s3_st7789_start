@@ -42,6 +42,7 @@ use embedded_graphics::{
     },
     text::{Alignment, Text},
 };
+use embedded_graphics_framebuf::FrameBuf;
 use log::{error, info};
 
 static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
@@ -54,8 +55,9 @@ const H: u16 = 320;
 const X_OFFSET: u16 = 35;
 const Y_OFFSET: u16 = 0;
 // Active area
-const W_ACTIVE: u16 = W - X_OFFSET; //170
-const H_ACTIVE: u16 = H - Y_OFFSET; //320
+const W_ACTIVE: usize = (W - X_OFFSET) as usize; //170
+const H_ACTIVE: usize = (H - Y_OFFSET) as usize; //320
+const FULL_FRAME_SIZE: usize = W_ACTIVE * H_ACTIVE * 2;
 
 // Animation constants
 const RECT_WIDTH: u32 = 40;
@@ -67,50 +69,6 @@ struct AnimationState {
     rect_x: i32,
     direction: i32,
     fps: u32,
-}
-
-// Function to draw a single animation frame
-fn draw_frame<D>(display: &mut D, state: &AnimationState) -> Result<(), D::Error>
-where
-    D: DrawTarget<Color = Rgb565>,
-{
-    // Clear screen
-    display.fill_solid(
-        &Rectangle {
-            top_left: Point { x: 0, y: 0 },
-            size: Size {
-                width: W_ACTIVE as u32,
-                height: H_ACTIVE as u32,
-            },
-        },
-        Rgb565::BLACK,
-    )?;
-
-    // Draw the moving rectangle
-    display.fill_solid(
-        &Rectangle {
-            top_left: Point { x: state.rect_x, y: 70 },
-            size: Size {
-                width: RECT_WIDTH,
-                height: RECT_HEIGHT,
-            },
-        },
-        Rgb565::RED,
-    )?;
-
-    // Draw FPS text at the bottom
-    let fps_text = format!("FPS: {}", state.fps);
-    let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
-    
-    Text::with_alignment(
-        &fps_text,
-        Point::new(W_ACTIVE as i32 / 2, H_ACTIVE as i32 - 20),
-        text_style,
-        Alignment::Center,
-    )
-    .draw(display)?;
-
-    Ok(())
 }
 
 // Function to update animation state
@@ -185,7 +143,7 @@ async fn main(_spawner: Spawner) {
     let di = SpiInterface::new(spi_device, dc, &mut disp_buffer);
     let mut delay = embassy_time::Delay;
     let mut display = Builder::new(ST7789, di)
-        .display_size(W_ACTIVE, H_ACTIVE)
+        .display_size(W_ACTIVE as u16, H_ACTIVE as u16)
         .display_offset(X_OFFSET, Y_OFFSET)
         .refresh_order(RefreshOrder {
             vertical: VerticalRefreshOrder::BottomToTop,
@@ -196,7 +154,7 @@ async fn main(_spawner: Spawner) {
         .init(&mut delay)
         .unwrap();
     info!("Display initialized!");
-
+    
     // Initialize animation state
     let mut animation_state = AnimationState {
         rect_x: 0,
@@ -210,15 +168,92 @@ async fn main(_spawner: Spawner) {
     let mut frame_time_sum = 0u64;
     let mut frame_count = 0;
 
+    // Initial black screen
+    let mut data: Vec<Rgb565, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
+    data.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
+    {
+        let mut fbuf = FrameBuf::new(data.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+        Rectangle {
+            top_left: Point { x: 0, y: 0 },
+            size: Size {
+                width: W_ACTIVE as u32,
+                height: H_ACTIVE as u32,
+            },
+        }
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(&mut fbuf)
+        .unwrap();
+    }
+    display
+        .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, data)
+        .unwrap();
+
     // Animation loop
     loop {
         let frame_start = Instant::now();
-
-        // Draw the current frame
-        draw_frame(&mut display, &animation_state).unwrap();
         
-        // Update animation state for next frame
-        update_animation_state(&mut animation_state);
+        // Create a new frame buffer for this frame
+        
+        
+        // Draw to the frame buffer
+        {
+            let mut frame_data: Vec<Rgb565, &EspHeap> = Vec::new_in(&HEAP);
+            frame_data.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
+            let mut fbuf = FrameBuf::new(frame_data.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+            
+            // Clear with black
+            Rectangle {
+                top_left: Point { x: 0, y: 0 },
+                size: Size {
+                    width: W_ACTIVE as u32,
+                    height: H_ACTIVE as u32,
+                },
+            }
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+            .draw(&mut fbuf)
+            .unwrap();
+            
+            // Draw the moving rectangle
+            Rectangle {
+                top_left: Point { x: animation_state.rect_x, y: 70 },
+                size: Size {
+                    width: RECT_WIDTH,
+                    height: RECT_HEIGHT,
+                },
+            }
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+            .draw(&mut fbuf)
+            .unwrap();
+            
+            // Draw FPS text
+            let fps_text = format!("FPS: {}", animation_state.fps);
+            let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+            
+            Text::with_alignment(
+                &fps_text,
+                Point::new(W_ACTIVE as i32 / 2, H_ACTIVE as i32 - 20),
+                text_style,
+                Alignment::Center,
+            )
+            .draw(&mut fbuf)
+            .unwrap();
+
+             // Update animation state for next frame
+             update_animation_state(&mut animation_state);
+
+             // Send the entire framebuffer to display at once
+             display
+                 .set_pixels(
+                     0, 
+                     0, 
+                     W_ACTIVE as u16 - 1, 
+                     H_ACTIVE as u16 - 1, 
+                     frame_data
+                 )
+                 .unwrap();
+        }
+        
+   
 
         // Update FPS counter
         fps_counter += 1;
@@ -233,7 +268,7 @@ async fn main(_spawner: Spawner) {
             fps_counter = 0;
             
             // Log FPS and average frame time
-            let avg_frame_time = if frame_count > 0 { frame_time_sum / frame_count } else { 0 };
+            //let avg_frame_time = if frame_count > 0 { frame_time_sum / frame_count } else { 0 };
             //info!("Current FPS: {}, Avg frame time: {}µs", animation_state.fps, avg_frame_time);
             
             // Reset statistics
@@ -241,13 +276,5 @@ async fn main(_spawner: Spawner) {
             frame_count = 0;
             last_fps_update = Instant::now();
         }
-        
-        // FPS limiting code is commented out to test maximum FPS
-        /*
-        if frame_time.as_millis() < 16 {  // Target ~60 FPS
-            let delay_time = Duration::from_millis(16) - frame_time;
-            Timer::after(delay_time).await;
-        }
-        */
     }
 }
