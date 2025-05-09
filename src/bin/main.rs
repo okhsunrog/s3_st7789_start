@@ -188,17 +188,45 @@ async fn main(_spawner: Spawner) {
         .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, data)
         .unwrap();
 
+    // Define a custom iterator that yields pixels from our frame buffer
+    struct FrameBufferIterator<'a> {
+        buffer: &'a [Rgb565],
+        index: usize,
+    }
+
+    impl<'a> FrameBufferIterator<'a> {
+        fn new(buffer: &'a [Rgb565]) -> Self {
+            Self {
+                buffer,
+                index: 0,
+            }
+        }
+    }
+
+    impl<'a> Iterator for FrameBufferIterator<'a> {
+        type Item = Rgb565;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.index < self.buffer.len() {
+                let pixel = self.buffer[self.index];
+                self.index += 1;
+                Some(pixel)
+            } else {
+                None
+            }
+        }
+    }
+
+    // Allocate the frame buffer once
+    let mut frame_data: Vec<Rgb565, &EspHeap> = Vec::new_in(&HEAP);
+    frame_data.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
+
     // Animation loop
     loop {
         let frame_start = Instant::now();
         
-        // Create a new frame buffer for this frame
-        
-        
         // Draw to the frame buffer
         {
-            let mut frame_data: Vec<Rgb565, &EspHeap> = Vec::new_in(&HEAP);
-            frame_data.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
             let mut fbuf = FrameBuf::new(frame_data.as_mut_slice(), W_ACTIVE, H_ACTIVE);
             
             // Clear with black
@@ -237,43 +265,31 @@ async fn main(_spawner: Spawner) {
             )
             .draw(&mut fbuf)
             .unwrap();
-
-             // Update animation state for next frame
-             update_animation_state(&mut animation_state);
-
-             // Send the entire framebuffer to display at once
-             display
-                 .set_pixels(
-                     0, 
-                     0, 
-                     W_ACTIVE as u16 - 1, 
-                     H_ACTIVE as u16 - 1, 
-                     frame_data
-                 )
-                 .unwrap();
         }
         
-   
+        // Update animation state for next frame
+        update_animation_state(&mut animation_state);
 
+        // Create an iterator over the frame buffer
+        let frame_iter = FrameBufferIterator::new(&frame_data);
+        
+        // Send the iterator to display
+        display
+            .set_pixels(
+                0, 
+                0, 
+                W_ACTIVE as u16 - 1, 
+                H_ACTIVE as u16 - 1, 
+                frame_iter
+            )
+            .unwrap();
+        
         // Update FPS counter
         fps_counter += 1;
-        
-        // Calculate frame time for statistics
-        let frame_time = frame_start.elapsed();
-        frame_time_sum += frame_time.as_micros() as u64;
-        frame_count += 1;
         
         if last_fps_update.elapsed().as_millis() >= 1000 {
             animation_state.fps = fps_counter;
             fps_counter = 0;
-            
-            // Log FPS and average frame time
-            //let avg_frame_time = if frame_count > 0 { frame_time_sum / frame_count } else { 0 };
-            //info!("Current FPS: {}, Avg frame time: {}µs", animation_state.fps, avg_frame_time);
-            
-            // Reset statistics
-            frame_time_sum = 0;
-            frame_count = 0;
             last_fps_update = Instant::now();
         }
     }
