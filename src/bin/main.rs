@@ -4,7 +4,7 @@
 
 use core::alloc::Layout;
 
-use alloc::{alloc::alloc_zeroed, vec};
+use alloc::{alloc::alloc_zeroed, vec, format};
 use allocator_api2::{alloc::Allocator, boxed::Box, vec::Vec};
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
@@ -58,8 +58,63 @@ const Y_OFFSET: u16 = 0;
 // Active area
 const W_ACTIVE: usize = (W - X_OFFSET) as usize; //170
 const H_ACTIVE: usize = (H - Y_OFFSET) as usize; //320
-
 const FULL_FRAME_SIZE: usize = W_ACTIVE as usize * H_ACTIVE as usize * 2;
+
+// Animation constants
+const RECT_WIDTH: u32 = 40;
+const RECT_HEIGHT: u32 = 30;
+const RECT_SPEED: i32 = 3;
+
+// Animation state struct
+struct AnimationState {
+    rect_x: i32,
+    direction: i32,
+    fps: u32,
+}
+
+// Function to update animation state
+fn update_animation_state(state: &mut AnimationState) {
+    // Update rectangle position
+    state.rect_x += state.direction * RECT_SPEED;
+
+    // Check for bouncing
+    if state.rect_x <= 0 {
+        state.rect_x = 0;
+        state.direction = 1;
+    } else if state.rect_x as u32 + RECT_WIDTH >= W_ACTIVE as u32 {
+        state.rect_x = (W_ACTIVE as u32 - RECT_WIDTH) as i32;
+        state.direction = -1;
+    }
+}
+
+// Define a custom iterator that yields pixels from our frame buffer
+struct FrameBufferIterator<'a> {
+    buffer: &'a [Rgb565],
+    index: usize,
+}
+
+impl<'a> FrameBufferIterator<'a> {
+    fn new(buffer: &'a [Rgb565]) -> Self {
+        Self {
+            buffer,
+            index: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for FrameBufferIterator<'a> {
+    type Item = Rgb565;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.buffer.len() {
+            let pixel = self.buffer[self.index];
+            self.index += 1;
+            Some(pixel)
+        } else {
+            None
+        }
+    }
+}
 
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) {
@@ -71,7 +126,8 @@ async fn main(_spawner: Spawner) {
         .with_psram(psram_conf);
     let p = esp_hal::init(conf);
     esp_alloc::heap_allocator!(#[unsafe(link_section = ".dram2_uninit")] size: 64000);
-    esp_alloc::heap_allocator!(size: 150 * 1024);
+    esp_alloc::heap_allocator!(size: 250 * 1024);
+
     let (start, size) = psram::psram_raw_parts(&p.PSRAM);
     info!("PSRAM start: {}, size: {}", start as usize, size as usize);
     unsafe {
@@ -114,12 +170,12 @@ async fn main(_spawner: Spawner) {
     let res = Output::new(res, Level::Low, Default::default());
     let dc = Output::new(dc, Level::Low, Default::default());
     let cs = Output::new(cs, Level::High, Default::default());
-
+    
     static SPI_BUS: StaticCell<Mutex<NoopRawMutex, SpiDmaBus<'static, Async>>> = StaticCell::new();
     let spi_bus = Mutex::new(spi);
     let spi_bus = SPI_BUS.init(spi_bus);
     let spi_device = SpiDevice::new(spi_bus, cs);
-
+    
     let di = SpiInterface::new(spi_device, dc, &mut disp_buffer);
     let mut delay = embassy_time::Delay;
     let mut display = Builder::new(ST7789, di)
@@ -134,12 +190,32 @@ async fn main(_spawner: Spawner) {
         .init(&mut delay)
         .await
         .unwrap();
+    
     info!("Display initialized!");
 
-    let mut data: Vec<Rgb565, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
-    data.resize(FULL_FRAME_SIZE / 2, Rgb565::BLACK);
+    // Initialize animation state
+    let mut animation_state = AnimationState {
+        rect_x: 0,
+        direction: 1, // 1 = right, -1 = left
+        fps: 0,
+    };
+
+    // FPS tracking variables
+    let mut fps_counter = 0;
+    let mut last_fps_update = Instant::now();
+
+    // Create two frame buffers for double buffering
+    let mut frame_buffer1: Vec<Rgb565, &EspHeap> = Vec::new_in(&HEAP);
+    let mut frame_buffer2: Vec<Rgb565, &EspHeap> = Vec::new_in(&HEAP);
+    
+    frame_buffer1.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
+    frame_buffer2.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
+    info!("Global heap stats: {}", HEAP.stats());
+    info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
+
+    // Initial black screen
     {
-        let mut fbuf = FrameBuf::new(data.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+        let mut fbuf = FrameBuf::new(frame_buffer1.as_mut_slice(), W_ACTIVE, H_ACTIVE);
         Rectangle {
             top_left: Point { x: 0, y: 0 },
             size: Size {
@@ -151,36 +227,101 @@ async fn main(_spawner: Spawner) {
         .draw(&mut fbuf)
         .unwrap();
     }
+
+    // Send initial frame
     display
-        .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, data)
+        .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, FrameBufferIterator::new(&frame_buffer1))
         .await
         .unwrap();
 
-    Timer::after(Duration::from_secs(1)).await;
-
-
-    let mut data2: Vec<Rgb565, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
-    data2.resize(FULL_FRAME_SIZE / 2, Rgb565::BLACK);
-    let mut fbuf2 = FrameBuf::new(data2.as_mut_slice(), W_ACTIVE, H_ACTIVE);
-
-    let start = Instant::now();
-    TestImage::new().draw(&mut fbuf2).unwrap();
-    let elapsed = start.elapsed();
-    info!("Drew image in {}us", elapsed.as_micros());
-
-    let start = Instant::now();
-    display
-        .set_pixels(0, 0, W_ACTIVE as u16 - 1, H_ACTIVE as u16 - 1, data2)
-        .await
-        .unwrap();
-    let elapsed = start.elapsed();
-    info!("Sent in {}us", elapsed.as_micros());
-
-    info!("Global heap stats: {}", HEAP.stats());
-    info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
-
+    // Double buffering variables
+    let mut current_buffer = 1; // 1 = frame_buffer1, 2 = frame_buffer2
+    
+    // Animation loop
     loop {
-        info!("Hello world!");
-        Timer::after(Duration::from_secs(3)).await;
+        let frame_start = Instant::now();
+        
+        // Select the buffer to draw to (the one not being sent to display)
+        let draw_buffer = if current_buffer == 1 {
+            &mut frame_buffer2
+        } else {
+            &mut frame_buffer1
+        };
+        
+        // Draw to the selected buffer
+        {
+            let mut fbuf = FrameBuf::new(draw_buffer.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+            
+            // Clear with black
+            Rectangle {
+                top_left: Point { x: 0, y: 0 },
+                size: Size {
+                    width: W_ACTIVE as u32,
+                    height: H_ACTIVE as u32,
+                },
+            }
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+            .draw(&mut fbuf)
+            .unwrap();
+            
+            // Draw the moving rectangle
+            Rectangle {
+                top_left: Point { x: animation_state.rect_x, y: 70 },
+                size: Size {
+                    width: RECT_WIDTH,
+                    height: RECT_HEIGHT,
+                },
+            }
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+            .draw(&mut fbuf)
+            .unwrap();
+            
+            // Draw FPS text
+            let fps_text = format!("FPS: {}", animation_state.fps);
+            let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+            
+            Text::with_alignment(
+                &fps_text,
+                Point::new(W_ACTIVE as i32 / 2, H_ACTIVE as i32 - 20),
+                text_style,
+                Alignment::Center,
+            )
+            .draw(&mut fbuf)
+            .unwrap();
+        }
+        
+        // Update animation state for next frame
+        update_animation_state(&mut animation_state);
+        
+        // Select the buffer to send to display (the one we just finished drawing)
+        let display_buffer = if current_buffer == 1 {
+            &frame_buffer1
+        } else {
+            &frame_buffer2
+        };
+        
+        // Send the buffer to display
+        display
+            .set_pixels(
+                0, 
+                0, 
+                W_ACTIVE as u16 - 1, 
+                H_ACTIVE as u16 - 1, 
+                FrameBufferIterator::new(display_buffer)
+            )
+            .await
+            .unwrap();
+        
+        // Swap buffers for next frame
+        current_buffer = if current_buffer == 1 { 2 } else { 1 };
+        
+        // Update FPS counter
+        fps_counter += 1;
+        
+        if last_fps_update.elapsed().as_millis() >= 1000 {
+            animation_state.fps = fps_counter;
+            fps_counter = 0;
+            last_fps_update = Instant::now();
+        }
     }
 }
