@@ -4,7 +4,7 @@
 
 use core::alloc::Layout;
 
-use alloc::{alloc::alloc_zeroed, vec};
+use alloc::{alloc::alloc_zeroed, vec, format};
 use allocator_api2::{alloc::Allocator, boxed::Box, vec::Vec};
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -61,6 +61,72 @@ const H_ACTIVE: u16 = H - Y_OFFSET; //320
 const RECT_WIDTH: u32 = 40;
 const RECT_HEIGHT: u32 = 30;
 const RECT_SPEED: i32 = 3;
+
+// Animation state struct
+struct AnimationState {
+    rect_x: i32,
+    direction: i32,
+    fps: u32,
+}
+
+// Function to draw a single animation frame
+fn draw_frame<D>(display: &mut D, state: &AnimationState) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    // Clear screen
+    display.fill_solid(
+        &Rectangle {
+            top_left: Point { x: 0, y: 0 },
+            size: Size {
+                width: W_ACTIVE as u32,
+                height: H_ACTIVE as u32,
+            },
+        },
+        Rgb565::BLACK,
+    )?;
+
+    // Draw the moving rectangle
+    display.fill_solid(
+        &Rectangle {
+            top_left: Point { x: state.rect_x, y: 70 },
+            size: Size {
+                width: RECT_WIDTH,
+                height: RECT_HEIGHT,
+            },
+        },
+        Rgb565::RED,
+    )?;
+
+    // Draw FPS text at the bottom
+    let fps_text = format!("FPS: {}", state.fps);
+    let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    
+    Text::with_alignment(
+        &fps_text,
+        Point::new(W_ACTIVE as i32 / 2, H_ACTIVE as i32 - 20),
+        text_style,
+        Alignment::Center,
+    )
+    .draw(display)?;
+
+    Ok(())
+}
+
+// Function to update animation state
+fn update_animation_state(state: &mut AnimationState) {
+    // Update rectangle position
+    state.rect_x += state.direction * RECT_SPEED;
+
+    // Check for bouncing
+    if state.rect_x <= 0 {
+        state.rect_x = 0;
+        state.direction = 1;
+    } else if state.rect_x as u32 + RECT_WIDTH >= W_ACTIVE as u32 {
+        state.rect_x = (W_ACTIVE as u32 - RECT_WIDTH) as i32;
+        state.direction = -1;
+    }
+}
 
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) {
@@ -131,93 +197,34 @@ async fn main(_spawner: Spawner) {
         .unwrap();
     info!("Display initialized!");
 
-    // Initial screen clear
-    display
-        .fill_solid(
-            &Rectangle {
-                top_left: Point { x: 0, y: 0 },
-                size: Size {
-                    width: W_ACTIVE as u32,
-                    height: H_ACTIVE as u32,
-                },
-            },
-            Rgb565::BLACK,
-        )
-        .unwrap();
+    // Initialize animation state
+    let mut animation_state = AnimationState {
+        rect_x: 0,
+        direction: 1, // 1 = right, -1 = left
+        fps: 0,
+    };
 
-    // Animation variables
-    let mut rect_x = 0;
-    let mut direction = 1; // 1 = right, -1 = left
+    // FPS tracking variables
     let mut fps_counter = 0;
-    let mut fps = 0;
     let mut last_fps_update = Instant::now();
-    let mut last_frame_time = Instant::now();
-
-    // Text style for FPS counter
-    let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
 
     // Animation loop
     loop {
         let frame_start = Instant::now();
 
-        // Clear screen
-        display
-            .fill_solid(
-                &Rectangle {
-                    top_left: Point { x: 0, y: 0 },
-                    size: Size {
-                        width: W_ACTIVE as u32,
-                        height: H_ACTIVE as u32,
-                    },
-                },
-                Rgb565::BLACK,
-            )
-            .unwrap();
-
-        // Draw the moving rectangle
-        display
-            .fill_solid(
-                &Rectangle {
-                    top_left: Point { x: rect_x, y: 50 },
-                    size: Size {
-                        width: RECT_WIDTH,
-                        height: RECT_HEIGHT,
-                    },
-                },
-                Rgb565::RED,
-            )
-            .unwrap();
-
-        // Draw FPS text at the bottom
-        let fps_text = alloc::format!("FPS: {}", fps);
-        Text::with_alignment(
-            &fps_text,
-            Point::new(W_ACTIVE as i32 / 2, H_ACTIVE as i32 - 20),
-            text_style,
-            Alignment::Center,
-        )
-        .draw(&mut display)
-        .unwrap();
-
-        // Update rectangle position
-        rect_x += direction * RECT_SPEED;
-
-        // Check for bouncing
-        if rect_x <= 0 {
-            rect_x = 0;
-            direction = 1;
-        } else if rect_x as u32 + RECT_WIDTH >= W_ACTIVE as u32 {
-            rect_x = (W_ACTIVE as u32 - RECT_WIDTH) as i32;
-            direction = -1;
-        }
+        // Draw the current frame
+        draw_frame(&mut display, &animation_state).unwrap();
+        
+        // Update animation state for next frame
+        update_animation_state(&mut animation_state);
 
         // Update FPS counter
         fps_counter += 1;
         if last_fps_update.elapsed().as_millis() >= 1000 {
-            fps = fps_counter;
+            animation_state.fps = fps_counter;
             fps_counter = 0;
             last_fps_update = Instant::now();
-            info!("Current FPS: {}", fps);
+            info!("Current FPS: {}", animation_state.fps);
         }
 
         // Calculate frame time and try to maintain a consistent frame rate
