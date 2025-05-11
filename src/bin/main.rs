@@ -6,9 +6,8 @@ use alloc::format;
 use allocator_api2::vec::Vec;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::mutex::Mutex;
-use embassy_time::{Duration, Instant, Timer};
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
+use embassy_time::Instant;
 use esp_alloc::{EspHeap, HEAP};
 use esp_backtrace as _;
 use esp_hal::{
@@ -209,8 +208,6 @@ async fn main(_spawner: Spawner) -> ! {
             animation_state.fps = fps_counter;
             fps_counter = 0;
             last_fps_update = Instant::now();
-            // info!("FPS: {}", animation_state.fps);
         }
-        // Timer::after(Duration::from_millis(1)).await;
     }
 }
