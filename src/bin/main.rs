@@ -96,7 +96,7 @@ async fn main(_spawner: Spawner) -> ! {
     let spi = Spi::new(
         p.SPI2,
         Config::default()
-            .with_frequency(Rate::from_mhz(40))
+            .with_frequency(Rate::from_mhz(80))
             .with_mode(Mode::_0),
     )
     .unwrap()
@@ -169,13 +169,14 @@ async fn main(_spawner: Spawner) -> ! {
         .unwrap();
 
     loop {
+        frame_bytes.fill(0);
         {
             let mut raw_fb = RawFrameBuf::<Rgb565, _, BYTES_PER_PIXEL_RGB565>::new(
                 frame_bytes.as_mut_slice(),
                 W_ACTIVE,
                 H_ACTIVE,
             );
-            raw_fb.clear(Rgb565::BLACK).unwrap();
+            // raw_fb.clear(Rgb565::BLACK).unwrap();
             Rectangle::new(
                 Point::new(animation_state.rect_x, 70),
                 Size::new(RECT_WIDTH, RECT_HEIGHT),
