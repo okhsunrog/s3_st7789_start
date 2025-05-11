@@ -209,8 +209,8 @@ async fn main(_spawner: Spawner) -> ! {
             animation_state.fps = fps_counter;
             fps_counter = 0;
             last_fps_update = Instant::now();
-            info!("FPS: {}", animation_state.fps);
+            // info!("FPS: {}", animation_state.fps);
         }
-        Timer::after(Duration::from_millis(1)).await;
+        // Timer::after(Duration::from_millis(1)).await;
     }
 }
