@@ -14,6 +14,7 @@ use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
     gpio::{Level, Output},
+    psram::{self, PsramConfig, PsramSize},
     spi::{
         master::{Config, Spi, SpiDmaBus},
         Mode,
@@ -36,12 +37,14 @@ use embedded_graphics::{
 };
 use log::info;
 
+static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
+
 const W: u16 = 205;
 const H: u16 = 320;
 const X_OFFSET: u16 = 35;
 const Y_OFFSET: u16 = 0;
-const W_ACTIVE: usize = (W - X_OFFSET) as usize;
-const H_ACTIVE: usize = (H - Y_OFFSET) as usize;
+const W_ACTIVE: usize = (W - X_OFFSET) as usize; // 170
+const H_ACTIVE: usize = (H - Y_OFFSET) as usize; // 320
 const PXL_SIZE: usize = 2;
 const FRAME_BYTE_SIZE: usize = W_ACTIVE * H_ACTIVE * PXL_SIZE;
 const RECT_WIDTH: u32 = 40;
@@ -65,13 +68,39 @@ fn update_animation_state(state: &mut AnimationState) {
     }
 }
 
+// - bench
+// 	- 170x320, rectangle, internal buffer (PSRAM was activates)
+// 		- Drew image in 883us
+// 		- Sent in 11429us
+// 	- 170x320, rectangle, internal buffer (PSRAM was not activates)
+// 		- Drew image in 796us
+// 		- Sent in 11431us / 11409us (oscillates, in between)
+// 	- 170x320, rectangle, buffer in PSRAM
+// 		- Drew image in 5844us
+// 		- Sent in 15167us
+// -
+// - drawing in PSRAM is expensive!
+// - hmm, just enabling PSRAM allocator changes fps from 83 to 82
+
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
-    let conf = esp_hal::Config::default().with_cpu_clock(CpuClock::_240MHz);
+    let mut psram_conf = PsramConfig::default();
+    psram_conf.size = PsramSize::Size(8 * 1024 * 1024);
+    let conf = esp_hal::Config::default()
+        .with_cpu_clock(CpuClock::_240MHz)
+        .with_psram(psram_conf);
     let p = esp_hal::init(conf);
     // esp_alloc::heap_allocator!(#[unsafe(link_section = ".dram2_uninit")] size: 64000);
-    esp_alloc::heap_allocator!(size: 120 * 1024);
+    esp_alloc::heap_allocator!(size: 150 * 1024); // 250K seems to work too
+    let (start, size) = psram::psram_raw_parts(&p.PSRAM);
+    unsafe {
+        PSRAM_ALLOCATOR.add_region(esp_alloc::HeapRegion::new(
+            start,
+            size,
+            esp_alloc::MemoryCapability::External.into(),
+        ));
+    }
 
     let timer0 = SystemTimer::new(p.SYSTIMER);
     esp_hal_embassy::init(timer0.alarm0);
@@ -127,23 +156,15 @@ async fn main(_spawner: Spawner) -> ! {
     let mut fps_counter = 0;
     let mut last_fps_update = Instant::now();
 
-    let mut frame: Vec<u8, &EspHeap> = Vec::new_in(&HEAP);
+    let mut frame: Vec<u8, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
 
     frame.resize(FRAME_BYTE_SIZE, 0);
     info!("Global heap stats: {}", HEAP.stats());
-
-    {
-        let mut raw_fb = RawFrameBuf::<Rgb565, _, PXL_SIZE>::new(frame.as_mut_slice(), W_ACTIVE, H_ACTIVE);
-        Rectangle::new(Point::new(0, 0), Size::new(W_ACTIVE as u32, H_ACTIVE as u32))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-            .draw(&mut raw_fb)
-            .unwrap();
-    }
-
-    display.show_raw_data(0, 0, W_ACTIVE, H_ACTIVE, &frame).await.unwrap();
+    info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
 
     loop {
         {
+            let start = Instant::now();
             let mut raw_fb = RawFrameBuf::<Rgb565, _, PXL_SIZE>::new(frame.as_mut_slice(), W_ACTIVE, H_ACTIVE);
             raw_fb.clear(Rgb565::BLACK).unwrap();
             Rectangle::new(
@@ -162,10 +183,15 @@ async fn main(_spawner: Spawner) -> ! {
             )
             .draw(&mut raw_fb)
             .unwrap();
+            let elapsed = start.elapsed();
+            info!("Drew image in {}us", elapsed.as_micros());
         }
         update_animation_state(&mut animation_state);
 
+        let start = Instant::now();
         display.show_raw_data(0, 0, W_ACTIVE, H_ACTIVE, &frame).await.unwrap();
+        let elapsed = start.elapsed();
+        info!("Sent in {}us", elapsed.as_micros());
 
         fps_counter += 1;
         if last_fps_update.elapsed().as_millis() >= 1000 {
