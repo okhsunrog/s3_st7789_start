@@ -8,12 +8,6 @@ name = "s3_st7789_start"
 path = "./src/bin/main.rs"
 
 [dependencies]
-# embassy-net = { version = "0.6.0", features = [
-#   "dhcpv4",
-#   "medium-ethernet",
-#   "tcp",
-#   "udp",
-# ] }
 embedded-io = "0.6.1"
 embedded-io-async = "0.6.1"
 esp-alloc = { version = "0.7.0", features = ["internal-heap-stats"] }
@@ -26,19 +20,6 @@ esp-backtrace = { version = "0.15.1", features = [
 esp-hal = { version = "1.0.0-beta.0", features = ["esp32s3", "unstable", "psram"] }
 esp-println = { version = "0.13.0", features = ["esp32s3", "log-04"] }
 log = { version = "0.4.21" }
-# smoltcp = { version = "0.12.0", default-features = false, features = [
-#   "medium-ethernet",
-#   "multicast",
-#   "proto-dhcpv4",
-#   "proto-dns",
-#   "proto-ipv4",
-#   "socket-dns",
-#   "socket-icmp",
-#   "socket-raw",
-#   "socket-tcp",
-#   "socket-udp",
-# ] }
-# for more networking protocol support see https://crates.io/crates/edge-net
 critical-section = "1.2.0"
 embassy-executor = "0.7.0"
 embassy-time = { version = "0.4.0", features = ["generic-queue-8"] }
@@ -50,7 +31,6 @@ mipidsi = { path = "../mipidsi" }
 embassy-embedded-hal = "0.3.0"
 embassy-sync = "0.6.2"
 embedded-graphics = "0.8.1"
-embedded-graphics-framebuf = { git = "https://github.com/bernii/embedded-graphics-framebuf", rev = "bf8a546911a31848b437765036e77a94d8ba7b10" }
 
 [profile.dev]
 # Rust debug is too slow.

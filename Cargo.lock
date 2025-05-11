@@ -289,15 +289,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "embedded-dma"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "994f7e5b5cb23521c22304927195f236813053eb9c065dd2226a32ba64695446"
-dependencies = [
- "stable_deref_trait",
-]
-
-[[package]]
 name = "embedded-graphics"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -318,15 +309,6 @@ checksum = "ba9ecd261f991856250d2207f6d8376946cd9f412a2165d3b75bc87a0bc7a044"
 dependencies = [
  "az",
  "byteorder",
-]
-
-[[package]]
-name = "embedded-graphics-framebuf"
-version = "0.5.0"
-source = "git+https://github.com/bernii/embedded-graphics-framebuf?rev=bf8a546911a31848b437765036e77a94d8ba7b10#bf8a546911a31848b437765036e77a94d8ba7b10"
-dependencies = [
- "embedded-dma",
- "embedded-graphics",
 ]
 
 [[package]]
@@ -799,10 +781,9 @@ dependencies = [
 name = "mipidsi"
 version = "0.9.0"
 dependencies = [
- "embedded-graphics-core",
+ "embedded-graphics",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
- "heapless",
 ]
 
 [[package]]
@@ -999,7 +980,6 @@ dependencies = [
  "embassy-sync",
  "embassy-time",
  "embedded-graphics",
- "embedded-graphics-framebuf",
  "embedded-io",
  "embedded-io-async",
  "esp-alloc",

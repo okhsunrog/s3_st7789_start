@@ -2,21 +2,19 @@
 #![no_main]
 #![feature(allocator_api)]
 
-use alloc::{format, vec};
-use allocator_api2::{alloc::Allocator, vec::Vec};
+use alloc::format;
+use allocator_api2::vec::Vec;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::mutex::Mutex;
-use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant, Ticker};
+use embassy_time::{Duration, Instant, Timer};
 use esp_alloc::{EspHeap, HEAP};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
     gpio::{Level, Output},
-    psram::{self, PsramConfig, PsramSize},
     spi::{
         master::{Config, Spi, SpiDmaBus},
         Mode,
@@ -25,12 +23,15 @@ use esp_hal::{
     timer::systimer::SystemTimer,
     Async,
 };
+
 use mipidsi::{
     interface::SpiInterface,
     models::ST7789,
-    options::{ColorInversion, HorizontalRefreshOrder, RefreshOrder, VerticalRefreshOrder},
+    options::ColorInversion,
+    raw_framebuf::RawFrameBuf,
     Builder,
 };
+
 use static_cell::StaticCell;
 extern crate alloc;
 use embedded_graphics::{
@@ -40,41 +41,28 @@ use embedded_graphics::{
     primitives::{PrimitiveStyle, Rectangle},
     text::{Alignment, Text},
 };
-use embedded_graphics_framebuf::FrameBuf;
 use log::info;
 
-static PSRAM_ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
-static mut SMALL_BUFFER: [u8; 2048] = [0u8; 2048];
-
-// Display
-// Size
 const W: u16 = 205;
 const H: u16 = 320;
-// Offset
 const X_OFFSET: u16 = 35;
 const Y_OFFSET: u16 = 0;
-// Active area
-const W_ACTIVE: usize = (W - X_OFFSET) as usize; //170
-const H_ACTIVE: usize = (H - Y_OFFSET) as usize; //320
-
-// Animation constants
+const W_ACTIVE: usize = (W - X_OFFSET) as usize;
+const H_ACTIVE: usize = (H - Y_OFFSET) as usize;
+const BYTES_PER_PIXEL_RGB565: usize = 2;
+const FRAME_BYTE_SIZE: usize = W_ACTIVE * H_ACTIVE * BYTES_PER_PIXEL_RGB565;
 const RECT_WIDTH: u32 = 40;
 const RECT_HEIGHT: u32 = 30;
 const RECT_SPEED: i32 = 3;
 
-// Animation state struct
 struct AnimationState {
     rect_x: i32,
     direction: i32,
     fps: u32,
 }
 
-// Function to update animation state
 fn update_animation_state(state: &mut AnimationState) {
-    // Update rectangle position
     state.rect_x += state.direction * RECT_SPEED;
-
-    // Check for bouncing
     if state.rect_x <= 0 {
         state.rect_x = 0;
         state.direction = 1;
@@ -84,98 +72,13 @@ fn update_animation_state(state: &mut AnimationState) {
     }
 }
 
-// Define a custom iterator that yields pixels from our frame buffer
-struct FrameBufferIterator<'a> {
-    buffer: &'a [Rgb565],
-    index: usize,
-}
-
-impl<'a> FrameBufferIterator<'a> {
-    fn new(buffer: &'a [Rgb565]) -> Self {
-        Self {
-            buffer,
-            index: 0,
-        }
-    }
-}
-
-impl<'a> Iterator for FrameBufferIterator<'a> {
-    type Item = Rgb565;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.buffer.len() {
-            let pixel = self.buffer[self.index];
-            self.index += 1;
-            Some(pixel)
-        } else {
-            None
-        }
-    }
-}
-
-// Define our frame type
-type Frame = Vec<Rgb565, &'static EspHeap>;
-
-// Signals for frame synchronization - using CriticalSectionRawMutex which is Sync
-static NEXT_FRAME: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
-static READY_FRAME: Signal<CriticalSectionRawMutex, Frame> = Signal::new();
-
-// Display type alias
-type DisplayType = mipidsi::Display<
-    SpiInterface<'static,
-        SpiDevice<'static, NoopRawMutex, SpiDmaBus<'static, Async>, Output<'static>>,
-        Output<'static>
-    >,
-    ST7789,
-    Output<'static>
->;
-
-
-// Display task that handles sending frames to the display
-#[embassy_executor::task]
-async fn display_task(mut display: DisplayType) {
-    let mut frame = READY_FRAME.wait().await;
-    
-    loop {
-        // Send the frame to the display
-        display
-            .set_pixels(
-                0, 
-                0, 
-                W_ACTIVE as u16 - 1, 
-                H_ACTIVE as u16 - 1, 
-                FrameBufferIterator::new(&frame)
-            )
-            .await
-            .unwrap();
-        
-        // Signal that we're ready for the next frame and wait for it
-        NEXT_FRAME.signal(frame);
-        frame = READY_FRAME.wait().await;
-    }
-}
-
 #[esp_hal_embassy::main]
-async fn main(spawner: Spawner) {
+async fn main(_spawner: Spawner) -> ! {
     esp_println::logger::init_logger_from_env();
-    let mut psram_conf = PsramConfig::default();
-    psram_conf.size = PsramSize::Size(8 * 1024 * 1024);
-    let conf = esp_hal::Config::default()
-        .with_cpu_clock(CpuClock::_240MHz)
-        .with_psram(psram_conf);
+    let conf = esp_hal::Config::default().with_cpu_clock(CpuClock::_240MHz);
     let p = esp_hal::init(conf);
-    esp_alloc::heap_allocator!(#[unsafe(link_section = ".dram2_uninit")] size: 64000);
-    esp_alloc::heap_allocator!(size: 250 * 1024);
-
-    let (start, size) = psram::psram_raw_parts(&p.PSRAM);
-    info!("PSRAM start: {}, size: {}", start as usize, size as usize);
-    unsafe {
-        PSRAM_ALLOCATOR.add_region(esp_alloc::HeapRegion::new(
-            start,
-            size,
-            esp_alloc::MemoryCapability::External.into(),
-        ));
-    }
+    // esp_alloc::heap_allocator!(#[unsafe(link_section = ".dram2_uninit")] size: 64000);
+    esp_alloc::heap_allocator!(size: 120 * 1024);
 
     let timer0 = SystemTimer::new(p.SYSTIMER);
     esp_hal_embassy::init(timer0.alarm0);
@@ -193,7 +96,7 @@ async fn main(spawner: Spawner) {
     let spi = Spi::new(
         p.SPI2,
         Config::default()
-            .with_frequency(Rate::from_mhz(80))
+            .with_frequency(Rate::from_mhz(40))
             .with_mode(Mode::_0),
     )
     .unwrap()
@@ -203,138 +106,114 @@ async fn main(spawner: Spawner) {
     .with_buffers(dma_rx_buf, dma_tx_buf)
     .into_async();
 
-    // Small buffer for SpiInterface - we only need a minimal buffer since we're not using it for drawing
-    let small_buffer = unsafe { &mut SMALL_BUFFER };
-
     let res = Output::new(res, Level::Low, Default::default());
     let dc = Output::new(dc, Level::Low, Default::default());
     let cs = Output::new(cs, Level::High, Default::default());
-    
+
     static SPI_BUS: StaticCell<Mutex<NoopRawMutex, SpiDmaBus<'static, Async>>> = StaticCell::new();
     let spi_bus = Mutex::new(spi);
     let spi_bus = SPI_BUS.init(spi_bus);
     let spi_device = SpiDevice::new(spi_bus, cs);
-    
-    let di = SpiInterface::new(spi_device, dc, small_buffer);
+
+    let di = SpiInterface::new(spi_device, dc);
     let mut delay = embassy_time::Delay;
-    let display = Builder::new(ST7789, di)
+
+    let mut display = Builder::new(ST7789, di)
+        .reset_pin(res)
         .display_size(W_ACTIVE as u16, H_ACTIVE as u16)
         .display_offset(X_OFFSET, Y_OFFSET)
-        .refresh_order(RefreshOrder {
-            vertical: VerticalRefreshOrder::BottomToTop,
-            horizontal: HorizontalRefreshOrder::RightToLeft,
-        })
         .invert_colors(ColorInversion::Inverted)
-        .reset_pin(res)
         .init(&mut delay)
         .await
         .unwrap();
-    
     info!("Display initialized!");
 
-    // Initialize animation state
     let mut animation_state = AnimationState {
         rect_x: 0,
-        direction: 1, // 1 = right, -1 = left
+        direction: 1,
         fps: 0,
     };
-
-    // FPS tracking variables
     let mut fps_counter = 0;
     let mut last_fps_update = Instant::now();
 
-    // Create two frame buffers for double buffering
-    // You can choose to allocate these in PSRAM or internal memory based on your performance needs
-    let mut frame_a: Frame = Vec::new_in(&HEAP);
-    let mut frame_b: Frame = Vec::new_in(&HEAP);
-    
-    frame_a.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
-    frame_b.resize(W_ACTIVE * H_ACTIVE, Rgb565::BLACK);
+    let mut frame_bytes: Vec<u8, &EspHeap> = Vec::new_in(&HEAP);
 
+    frame_bytes.resize(FRAME_BYTE_SIZE, 0);
     info!("Global heap stats: {}", HEAP.stats());
-    info!("PSRAM heap stats: {}", PSRAM_ALLOCATOR.stats());
 
-    // Initialize the first frame with black
     {
-        let mut fbuf = FrameBuf::new(frame_a.as_mut_slice(), W_ACTIVE, H_ACTIVE);
-        Rectangle::new(Point::new(0, 0), Size::new(W_ACTIVE as u32, H_ACTIVE as u32))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-            .draw(&mut fbuf)
-            .unwrap();
-    }
-    {
-        let mut fbuf = FrameBuf::new(frame_b.as_mut_slice(), W_ACTIVE, H_ACTIVE);
-        Rectangle::new(Point::new(0, 0), Size::new(W_ACTIVE as u32, H_ACTIVE as u32))
-            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-            .draw(&mut fbuf)
-            .unwrap();
+        let mut raw_fb = RawFrameBuf::<Rgb565, _, BYTES_PER_PIXEL_RGB565>::new(
+            frame_bytes.as_mut_slice(),
+            W_ACTIVE,
+            H_ACTIVE,
+        );
+        Rectangle::new(
+            Point::new(0, 0),
+            Size::new(W_ACTIVE as u32, H_ACTIVE as u32),
+        )
+        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+        .draw(&mut raw_fb)
+        .unwrap();
     }
 
-    // Signal the first frame as ready to display
-    READY_FRAME.signal(frame_a);
-    
-    // Start with the second frame for drawing
-    let mut current_frame = frame_b;
-    
-    // Spawn the display task
-    spawner.spawn(display_task(display)).unwrap();
-    
-    // Main rendering loop
-    let mut ticker = Ticker::every(Duration::from_millis(1));
-    
+    display
+        .show_raw_data(
+            // MIPIDSI CHANGE
+            0,
+            0,
+            W_ACTIVE as u16 - 1,
+            H_ACTIVE as u16 - 1,
+            &frame_bytes,
+        )
+        .await
+        .unwrap();
+
     loop {
-        // Draw to the current frame (we don't wait for NEXT_FRAME)
         {
-            let mut fbuf = FrameBuf::new(current_frame.as_mut_slice(), W_ACTIVE, H_ACTIVE);
-            
-            // Clear with black
-            Rectangle::new(Point::new(0, 0), Size::new(W_ACTIVE as u32, H_ACTIVE as u32))
-                .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-                .draw(&mut fbuf)
-                .unwrap();
-            
-            // Draw the moving rectangle
+            let mut raw_fb = RawFrameBuf::<Rgb565, _, BYTES_PER_PIXEL_RGB565>::new(
+                frame_bytes.as_mut_slice(),
+                W_ACTIVE,
+                H_ACTIVE,
+            );
+            raw_fb.clear(Rgb565::BLACK).unwrap();
             Rectangle::new(
                 Point::new(animation_state.rect_x, 70),
                 Size::new(RECT_WIDTH, RECT_HEIGHT),
             )
             .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
-            .draw(&mut fbuf)
+            .draw(&mut raw_fb)
             .unwrap();
-            
-            // Draw FPS text
             let fps_text = format!("FPS: {}", animation_state.fps);
-            let text_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
-            
             Text::with_alignment(
                 &fps_text,
                 Point::new(W_ACTIVE as i32 / 2, H_ACTIVE as i32 - 20),
-                text_style,
+                MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE),
                 Alignment::Center,
             )
-            .draw(&mut fbuf)
+            .draw(&mut raw_fb)
             .unwrap();
         }
-        
-        // Update animation state for next frame
         update_animation_state(&mut animation_state);
-        
-        // Signal that the frame is ready for display
-        READY_FRAME.signal(current_frame);
-        
-        // Get the next frame buffer (this will wait if necessary)
-        current_frame = NEXT_FRAME.wait().await;
-        
-        // Update FPS counter
+
+        display
+            .show_raw_data(
+                // MIPIDSI CHANGE
+                0,
+                0,
+                W_ACTIVE as u16 - 1,
+                H_ACTIVE as u16 - 1,
+                &frame_bytes,
+            )
+            .await
+            .unwrap();
+
         fps_counter += 1;
-        
         if last_fps_update.elapsed().as_millis() >= 1000 {
             animation_state.fps = fps_counter;
             fps_counter = 0;
             last_fps_update = Instant::now();
+            info!("FPS: {}", animation_state.fps);
         }
-        
-        // Pace the rendering
-        ticker.next().await;
+        Timer::after(Duration::from_millis(1)).await;
     }
 }
