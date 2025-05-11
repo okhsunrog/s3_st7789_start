@@ -27,7 +27,7 @@ esp-hal-embassy = { version = "0.7.0", features = ["esp32s3"] }
 heapless = { version = "0.8.0", default-features = false }
 static_cell = { version = "2.1.0", features = ["nightly"] }
 allocator-api2 = { version = "0.2.0", default-features = false, features = ["alloc"] }
-mipidsi = { git = "https://github.com/okhsunrog/mipidsi", rev = "82f97f907c5e5482dae4a1252929eb557d6691d5" }
+mipidsi = { git = "https://github.com/okhsunrog/mipidsi" }
 embassy-embedded-hal = "0.3.0"
 embassy-sync = "0.6.2"
 embedded-graphics = "0.8.1"

@@ -23,10 +23,7 @@ use esp_hal::{
     Async,
 };
 
-use mipidsi::{
-    interface::SpiInterface, models::ST7789, options::ColorInversion, raw_framebuf::RawFrameBuf,
-    Builder,
-};
+use mipidsi::{interface::SpiInterface, models::ST7789, options::ColorInversion, raw_framebuf::RawFrameBuf, Builder};
 
 use static_cell::StaticCell;
 extern crate alloc;
@@ -45,8 +42,8 @@ const X_OFFSET: u16 = 35;
 const Y_OFFSET: u16 = 0;
 const W_ACTIVE: usize = (W - X_OFFSET) as usize;
 const H_ACTIVE: usize = (H - Y_OFFSET) as usize;
-const BYTES_PER_PIXEL_RGB565: usize = 2;
-const FRAME_BYTE_SIZE: usize = W_ACTIVE * H_ACTIVE * BYTES_PER_PIXEL_RGB565;
+const PXL_SIZE: usize = 2;
+const FRAME_BYTE_SIZE: usize = W_ACTIVE * H_ACTIVE * PXL_SIZE;
 const RECT_WIDTH: u32 = 40;
 const RECT_HEIGHT: u32 = 30;
 const RECT_SPEED: i32 = 3;
@@ -91,9 +88,7 @@ async fn main(_spawner: Spawner) -> ! {
     let cs = p.GPIO15;
     let spi = Spi::new(
         p.SPI2,
-        Config::default()
-            .with_frequency(Rate::from_mhz(80))
-            .with_mode(Mode::_0),
+        Config::default().with_frequency(Rate::from_mhz(80)).with_mode(Mode::_0),
     )
     .unwrap()
     .with_sck(sclk)
@@ -116,7 +111,7 @@ async fn main(_spawner: Spawner) -> ! {
 
     let mut display = Builder::new(ST7789, di)
         .reset_pin(res)
-        .display_size(W_ACTIVE as u16, H_ACTIVE as u16)
+        .display_size(W_ACTIVE, H_ACTIVE)
         .display_offset(X_OFFSET, Y_OFFSET)
         .invert_colors(ColorInversion::Inverted)
         .init(&mut delay)
@@ -132,45 +127,24 @@ async fn main(_spawner: Spawner) -> ! {
     let mut fps_counter = 0;
     let mut last_fps_update = Instant::now();
 
-    let mut frame_bytes: Vec<u8, &EspHeap> = Vec::new_in(&HEAP);
+    let mut frame: Vec<u8, &EspHeap> = Vec::new_in(&HEAP);
 
-    frame_bytes.resize(FRAME_BYTE_SIZE, 0);
+    frame.resize(FRAME_BYTE_SIZE, 0);
     info!("Global heap stats: {}", HEAP.stats());
 
     {
-        let mut raw_fb = RawFrameBuf::<Rgb565, _, BYTES_PER_PIXEL_RGB565>::new(
-            frame_bytes.as_mut_slice(),
-            W_ACTIVE,
-            H_ACTIVE,
-        );
-        Rectangle::new(
-            Point::new(0, 0),
-            Size::new(W_ACTIVE as u32, H_ACTIVE as u32),
-        )
-        .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
-        .draw(&mut raw_fb)
-        .unwrap();
+        let mut raw_fb = RawFrameBuf::<Rgb565, _, PXL_SIZE>::new(frame.as_mut_slice(), W_ACTIVE, H_ACTIVE);
+        Rectangle::new(Point::new(0, 0), Size::new(W_ACTIVE as u32, H_ACTIVE as u32))
+            .into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK))
+            .draw(&mut raw_fb)
+            .unwrap();
     }
 
-    display
-        .show_raw_data(
-            // MIPIDSI CHANGE
-            0,
-            0,
-            W_ACTIVE as u16 - 1,
-            H_ACTIVE as u16 - 1,
-            &frame_bytes,
-        )
-        .await
-        .unwrap();
+    display.show_raw_data(0, 0, W_ACTIVE, H_ACTIVE, &frame).await.unwrap();
 
     loop {
         {
-            let mut raw_fb = RawFrameBuf::<Rgb565, _, BYTES_PER_PIXEL_RGB565>::new(
-                frame_bytes.as_mut_slice(),
-                W_ACTIVE,
-                H_ACTIVE,
-            );
+            let mut raw_fb = RawFrameBuf::<Rgb565, _, PXL_SIZE>::new(frame.as_mut_slice(), W_ACTIVE, H_ACTIVE);
             raw_fb.clear(Rgb565::BLACK).unwrap();
             Rectangle::new(
                 Point::new(animation_state.rect_x, 70),
@@ -191,17 +165,7 @@ async fn main(_spawner: Spawner) -> ! {
         }
         update_animation_state(&mut animation_state);
 
-        display
-            .show_raw_data(
-                // MIPIDSI CHANGE
-                0,
-                0,
-                W_ACTIVE as u16 - 1,
-                H_ACTIVE as u16 - 1,
-                &frame_bytes,
-            )
-            .await
-            .unwrap();
+        display.show_raw_data(0, 0, W_ACTIVE, H_ACTIVE, &frame).await.unwrap();
 
         fps_counter += 1;
         if last_fps_update.elapsed().as_millis() >= 1000 {
