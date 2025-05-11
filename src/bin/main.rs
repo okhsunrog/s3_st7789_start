@@ -25,10 +25,7 @@ use esp_hal::{
 };
 
 use mipidsi::{
-    interface::SpiInterface,
-    models::ST7789,
-    options::ColorInversion,
-    raw_framebuf::RawFrameBuf,
+    interface::SpiInterface, models::ST7789, options::ColorInversion, raw_framebuf::RawFrameBuf,
     Builder,
 };
 
@@ -169,14 +166,13 @@ async fn main(_spawner: Spawner) -> ! {
         .unwrap();
 
     loop {
-        frame_bytes.fill(0);
         {
             let mut raw_fb = RawFrameBuf::<Rgb565, _, BYTES_PER_PIXEL_RGB565>::new(
                 frame_bytes.as_mut_slice(),
                 W_ACTIVE,
                 H_ACTIVE,
             );
-            // raw_fb.clear(Rgb565::BLACK).unwrap();
+            raw_fb.clear(Rgb565::BLACK).unwrap();
             Rectangle::new(
                 Point::new(animation_state.rect_x, 70),
                 Size::new(RECT_WIDTH, RECT_HEIGHT),
