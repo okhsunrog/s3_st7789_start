@@ -81,6 +81,7 @@ fn update_animation_state(state: &mut AnimationState) {
 // -
 // - drawing in PSRAM is expensive!
 // - hmm, just enabling PSRAM allocator changes fps from 83 to 82
+// logging for bench eats a couple of FPS too
 
 #[esp_hal_embassy::main]
 async fn main(_spawner: Spawner) -> ! {
@@ -156,7 +157,7 @@ async fn main(_spawner: Spawner) -> ! {
     let mut fps_counter = 0;
     let mut last_fps_update = Instant::now();
 
-    let mut frame: Vec<u8, &EspHeap> = Vec::new_in(&PSRAM_ALLOCATOR);
+    let mut frame: Vec<u8, &EspHeap> = Vec::new_in(&HEAP); // or &PSRAM_ALLOCATOR)
 
     frame.resize(FRAME_BYTE_SIZE, 0);
     info!("Global heap stats: {}", HEAP.stats());
@@ -184,14 +185,14 @@ async fn main(_spawner: Spawner) -> ! {
             .draw(&mut raw_fb)
             .unwrap();
             let elapsed = start.elapsed();
-            info!("Drew image in {}us", elapsed.as_micros());
+            // info!("Drew image in {}us", elapsed.as_micros());
         }
         update_animation_state(&mut animation_state);
 
         let start = Instant::now();
         display.show_raw_data(0, 0, W_ACTIVE, H_ACTIVE, &frame).await.unwrap();
         let elapsed = start.elapsed();
-        info!("Sent in {}us", elapsed.as_micros());
+        // info!("Sent in {}us", elapsed.as_micros());
 
         fps_counter += 1;
         if last_fps_update.elapsed().as_millis() >= 1000 {
